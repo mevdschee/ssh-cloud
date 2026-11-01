@@ -8,8 +8,10 @@ A local transfer list is used to detect collisions.
 
 ## Constraints
 
-- Windows 10/11, native Win32 controls via windigo, styled like Windows 11.
-  Single `.exe`.
+- Windows 11 only (no effort for older versions), and it must keep running
+  under Wine. Native Win32 controls via windigo plus GDI drawing, styled like
+  Windows 11. No new COM beyond what is there (the file dialogs and the drag
+  out data object). Single `.exe`.
 - Server: plain OpenSSH SFTP. No shell, no daemon. Server-side copy needs the
   `copy-data` extension (OpenSSH 9.0+); everything else works on any SFTP server.
 - Typically one shared SSH account with a key per person in `authorized_keys`;
@@ -134,11 +136,14 @@ renames temp to `<name> (2).<ext>` (next free number) and writes its hash file.
 ## Explorer window
 
 - Windows 11 look: Fluent UI System Icons (MIT, embedded SVGs rendered at the
-  screen's DPI) on flat toolbars, the Explorer theme on the tree and list,
+  screen's DPI) on flat native toolbars (their background painted white
+  through TBSTYLE_CUSTOMERASE; Windows draws the buttons), the Explorer theme on the tree and list,
   Segoe UI Variable (falls back to the system font on Windows 10), a white
   content area with thin dividers, and a rounded window with a Mica title bar.
-- Tabs in a grey band at the top, one per open connection, each with its own
-  folder, history and listing. New tab (+, Ctrl+T) opens the connection
+- Tabs in a grey band below the title bar, one per open connection, each with
+  its own folder, history and listing. Drawn like Explorer's (GDI, double
+  buffered): rounded, the active tab white and joined to the row below, a
+  close button on the active and the hovered tab, and a + button. New tab (+, Ctrl+T) opens the connection
   manager; close with Ctrl+W, a middle-click or the tab's right-click menu;
   Ctrl+Tab switches. Cut/copy and paste work within one connection.
 - Navigation row: Back, Forward, Up, Refresh and the address bar. Command bar:

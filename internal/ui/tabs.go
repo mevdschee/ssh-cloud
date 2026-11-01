@@ -10,14 +10,10 @@ package ui
 
 import (
 	"log/slog"
-	"unsafe"
 
 	"github.com/mevdschee/ssh-cloud/internal/app"
 	"github.com/mevdschee/ssh-cloud/internal/config"
 	"github.com/mevdschee/ssh-cloud/internal/remote"
-	"github.com/rodrigocfd/windigo/co"
-	"github.com/rodrigocfd/windigo/ui"
-	"github.com/rodrigocfd/windigo/win"
 )
 
 // session is one tab.
@@ -37,31 +33,20 @@ const (
 	cmdTabNew
 )
 
-// rebuildTabs recreates the tab buttons: one per session, then "+".
+// rebuildTabs shows the sessions in the tab strip.
 func (me *Explorer) rebuildTabs() {
-	removeButtons(me.tabBar)
-	var buttons []tbButton
+	names := make([]string, len(me.sessions))
 	for i, s := range me.sessions {
-		buttons = append(buttons, tbButton{id: tbTab + uint16(i), icon: "cloud", text: s.profile.DisplayName(), showText: true, check: true})
+		names[i] = s.profile.DisplayName()
 	}
-	buttons = append(buttons, tbButton{id: tbNewTab, icon: "add", text: "New tab (Ctrl+T)"})
-	addButtons(me.tabBar, buttons)
-	if me.active >= 0 {
-		checkButton(me.tabBar, tbTab+uint16(me.active), true)
-	}
+	me.tabs.set(names, me.active)
 	me.updateTabButtons()
-	if me.styled {
-		me.layout()
-	}
 }
 
 // updateTabButtons disables tab switching while an operation runs, so its
 // result cannot end up in another tab.
 func (me *Explorer) updateTabButtons() {
-	for i := range me.sessions {
-		enableButton(me.tabBar, tbTab+uint16(i), !me.busy)
-	}
-	enableButton(me.tabBar, tbNewTab, !me.busy && len(me.sessions) < maxTabs)
+	me.tabs.setEnabled(!me.busy)
 }
 
 // saveActive stores the window's state in the active session.
@@ -96,9 +81,6 @@ func (me *Explorer) activate(i int) {
 
 func (me *Explorer) switchTab(i int) {
 	if me.busy || i < 0 || i >= len(me.sessions) {
-		if me.active >= 0 { // a click on a disabled or the same tab
-			checkButton(me.tabBar, tbTab+uint16(me.active), true)
-		}
 		return
 	}
 	if i != me.active {
@@ -187,17 +169,23 @@ func (me *Explorer) closeAllSessions() {
 	me.mu.Unlock()
 }
 
-// tabEvents: right-click menu and middle-click to close.
+// tabEvents connects the tab strip: click selects, the close button and a
+// middle-click close, + opens a new tab, right-click shows a menu.
 func (me *Explorer) tabEvents() {
-	me.tabBar.On().NmRClick(func(p *win.NMMOUSE) bool {
-		id := uint16(p.DwItemSpec)
-		i := int(id) - int(tbTab)
-		isTab := id >= tbTab && i < len(me.sessions)
+	me.tabs.onSelect = me.switchTab
+	me.tabs.onClose = me.closeTab
+	me.tabs.onNew = func() {
+		if len(me.sessions) < maxTabs {
+			me.promptConnect(true)
+		}
+	}
+	me.tabs.onMenu = func(i int) {
+		isTab := i >= 0 && i < len(me.sessions)
 		items := []menuItem{
 			{id: cmdTabClose, text: "&Close tab\tCtrl+W", enabled: isTab && !me.busy},
 			{id: cmdTabCloseOthers, text: "Close &other tabs", enabled: isTab && !me.busy && len(me.sessions) > 1},
 			{},
-			{id: cmdTabNew, text: "&New tab\tCtrl+T", enabled: !me.busy},
+			{id: cmdTabNew, text: "&New tab\tCtrl+T", enabled: !me.busy && len(me.sessions) < maxTabs},
 		}
 		switch popupMenu(me.wnd.Hwnd(), items) {
 		case cmdTabClose:
@@ -212,13 +200,5 @@ func (me *Explorer) tabEvents() {
 		case cmdTabNew:
 			me.promptConnect(true)
 		}
-		return true
-	})
-	me.tabBar.OnSubclass().WmMButtonUp(func(p ui.WmMouse) {
-		pt := p.Pos()
-		idx, _ := me.tabBar.Hwnd().SendMessage(co.TB_HITTEST, 0, win.LPARAM(unsafe.Pointer(&pt)))
-		if i := int(int32(idx)); i >= 0 && i < len(me.sessions) {
-			me.closeTab(i)
-		}
-	})
+	}
 }

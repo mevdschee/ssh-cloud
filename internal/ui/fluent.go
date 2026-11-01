@@ -139,20 +139,29 @@ var toolbarStrings [][]uint16
 var toolbarIcons = map[win.HWND][]string{}
 
 // newToolbar creates a flat toolbar that paints its background in bg (a
-// COLORREF) instead of the grey of the classic toolbar, and does not position
-// itself (the window's layout code places it).
+// COLORREF) instead of the grey of the themed toolbar, and does not position
+// itself (the window's layout code places it). The background goes through
+// TBSTYLE_CUSTOMERASE (the toolbar asks its owner to erase it) and is also
+// painted at the start of each paint, below the buttons, which Windows still
+// draws with their normal hover, pressed and checked looks.
 func newToolbar(parent ui.Parent, bg uint32) *ui.Toolbar {
 	tb := ui.NewToolbar(parent, ui.OptsToolbar().
-		CtrlStyle(co.TBSTYLE_FLAT|co.TBSTYLE_LIST|co.TBSTYLE_TOOLTIPS).
+		CtrlStyle(co.TBSTYLE_FLAT|co.TBSTYLE_LIST|co.TBSTYLE_TOOLTIPS|co.TBSTYLE_CUSTOMERASE).
 		CtrlExStyle(co.TBSTYLE_EX_MIXEDBUTTONS|co.TBSTYLE_EX_DOUBLEBUFFER).
 		WndStyle(co.WS_CHILD|co.WS_VISIBLE|co.WS(ccsNoResize|ccsNoParentAlign|ccsNoDivider)))
-	tb.OnSubclass().WmEraseBkgnd(func(p ui.WmEraseBkgnd) int {
-		rc, err := tb.Hwnd().GetClientRect()
-		if err != nil {
-			return 0
+	tb.On().NmCustomDraw(func(p *win.NMTBCUSTOMDRAW) co.CDRF {
+		switch p.Nmcd.DwDrawStage {
+		case co.CDDS_PREERASE:
+			if rc, err := tb.Hwnd().GetClientRect(); err == nil {
+				fillRect(uintptr(p.Nmcd.Hdc), rc, bg)
+			}
+			return co.CDRF_SKIPDEFAULT
+		case co.CDDS_PREPAINT:
+			if rc, err := tb.Hwnd().GetClientRect(); err == nil {
+				fillRect(uintptr(p.Nmcd.Hdc), rc, bg)
+			}
 		}
-		fillRect(uintptr(p.Hdc()), rc, bg)
-		return 1
+		return co.CDRF_DODEFAULT
 	})
 	return tb
 }
@@ -211,17 +220,6 @@ func addButtons(tb *ui.Toolbar, buttons []tbButton) {
 		h.SendMessage(co.TB_ADDBUTTONS, 1, win.LPARAM(unsafe.Pointer(&tbb)))
 	}
 	h.SendMessage(co.TB_AUTOSIZE, 0, 0)
-}
-
-// removeButtons deletes all buttons of a toolbar.
-func removeButtons(tb *ui.Toolbar) {
-	for {
-		n, _ := tb.Hwnd().SendMessage(co.TB_BUTTONCOUNT, 0, 0)
-		if n == 0 {
-			return
-		}
-		tb.Hwnd().SendMessage(co.TB_DELETEBUTTON, 0, 0)
-	}
 }
 
 // fillToolbar sets up a toolbar with exactly the icons of its buttons.

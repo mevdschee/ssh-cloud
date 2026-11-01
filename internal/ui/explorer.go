@@ -58,7 +58,7 @@ const (
 // Explorer is the main window.
 type Explorer struct {
 	wnd                     *ui.Main
-	tabBar                  *ui.Toolbar // one button per open connection
+	tabs                    *tabStrip   // one tab per open connection
 	navBar, cmdBar, connBar *ui.Toolbar // Fluent icon toolbars
 	address                 *ui.Edit
 	tree                    *ui.TreeView
@@ -134,7 +134,7 @@ func (me *Explorer) build() {
 		ClassIconId(1).                              // the app icon (winres/winres.json)
 		Center(true))
 
-	me.tabBar = newToolbar(me.wnd, bandColor)
+	me.tabs = newTabStrip(me.wnd)
 	me.navBar = newToolbar(me.wnd, windowColor)
 	me.address = ui.NewEdit(me.wnd, ui.OptsEdit().Position(ui.Dpi(160, 9)).Width(ui.DpiX(600)))
 	me.cmdBar = newToolbar(me.wnd, windowColor)

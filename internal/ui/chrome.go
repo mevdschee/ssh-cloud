@@ -30,15 +30,11 @@ const (
 	tbStop
 	tbConnections
 	tbDetails
-	tbNewTab
 	tbUpdate
 )
 
-// tbTab is the id of the first tab button; tab i has id tbTab+i.
-const (
-	tbTab   uint16 = 4001
-	maxTabs        = 32
-)
+// maxTabs limits the number of open connections.
+const maxTabs = 32
 
 var (
 	procBeginPaint       = user32.NewProc("BeginPaint")
@@ -72,7 +68,7 @@ func (me *Explorer) styleWindow() {
 	me.address.Hwnd().SendMessage(co.EM_SETMARGINS, 0x1|0x2, win.LPARAM(uint32(m)|uint32(m)<<16))
 
 	size := iconSize(me.wnd.Hwnd())
-	setupToolbar(me.tabBar, []string{"cloud", "add"}, size, ui.DpiX(20), ui.DpiY(12))
+	me.tabs.setup(me.fontNormal, me.wnd.Hwnd().GetDpiForWindow())
 	me.rebuildTabs()
 	fillToolbar(me.navBar, []tbButton{
 		{id: tbBack, icon: "arrow_left", text: "Back (Alt+Left)"},
@@ -151,10 +147,6 @@ func (me *Explorer) toolbarEvents() {
 	on(tbConnections, func() { me.promptConnect(false) })
 	on(tbDetails, me.toggleDetails)
 	on(tbUpdate, me.checkForUpdates)
-	on(tbNewTab, func() { me.promptConnect(true) })
-	for i := 0; i < maxTabs; i++ {
-		on(tbTab+uint16(i), func() { me.switchTab(i) })
-	}
 	me.tabEvents()
 	me.wnd.On().WmPaint(me.paint)
 	// Labels on the window (the status line) get the window background.
@@ -181,8 +173,12 @@ func move(h win.HWND, x, y, cx, cy int) {
 	if cy < 0 {
 		cy = 0
 	}
+	// SWP_NOCOPYBITS and the invalidate: a moved or resized control must be
+	// redrawn, not shown with its old pixels (a right-aligned label would
+	// otherwise keep its text at the old position, cut off).
 	h.SetWindowPos(0, win.POINT{X: int32(x), Y: int32(y)}, win.SIZE{Cx: int32(cx), Cy: int32(cy)},
-		co.SWP_NOZORDER|co.SWP_NOACTIVATE)
+		co.SWP_NOZORDER|co.SWP_NOACTIVATE|co.SWP_NOCOPYBITS)
+	procInvalidateRect.Call(uintptr(h), 0, 1)
 }
 
 // layout positions everything, top to bottom: the grey tab band, the
@@ -200,9 +196,8 @@ func (me *Explorer) layout() {
 	cw, ch := int(rc.Right), int(rc.Bottom)
 	m := ui.DpiX(8)
 
-	tabs := toolbarSize(me.tabBar)
-	me.bandHeight = int(tabs.Cy) + ui.DpiY(8)
-	move(me.tabBar.Hwnd(), m, ui.DpiY(4), min(int(tabs.Cx), cw-2*m), int(tabs.Cy))
+	me.bandHeight = ui.DpiY(42)
+	move(me.tabs.ctl.Hwnd(), 0, 0, cw, me.bandHeight)
 
 	nav := toolbarSize(me.navBar)
 	row1Y, row1H := me.bandHeight+ui.DpiY(6), max(int(nav.Cy), ui.DpiY(40))
@@ -234,15 +229,21 @@ func (me *Explorer) layout() {
 	}
 	move(me.tree.Hwnd(), 0, top, me.treeWidth, h)
 	move(me.list.Hwnd(), me.treeWidth, top, listW, h)
-	me.fitLastColumn()
+	me.fitColumns(listW)
 	procInvalidateRect.Call(uintptr(me.wnd.Hwnd()), 0, 1)
 }
 
-// fitLastColumn stretches the Status column to the list's right edge, so
-// there is no horizontal scrollbar while the other columns fit.
-func (me *Explorer) fitLastColumn() {
-	autosizeUseHeader := -2 // LVSCW_AUTOSIZE_USEHEADER, passed as a negative LPARAM
-	me.list.Hwnd().SendMessage(co.LVM_SETCOLUMNWIDTH, win.WPARAM(me.list.ColCount()-1), win.LPARAM(autosizeUseHeader))
+// fitColumns sizes the columns like Explorer: Date modified, Type, Size and
+// Status keep their width and Name takes the rest, so there is no
+// horizontal scrollbar until the list gets really narrow.
+func (me *Explorer) fitColumns(listW int) {
+	fixed := []int{ui.DpiX(130), ui.DpiX(130), ui.DpiX(80), ui.DpiX(110)}
+	rest := listW - ui.DpiX(22) // room for the vertical scrollbar
+	for i, w := range fixed {
+		me.list.Col(i + 1).SetWidth(w)
+		rest -= w
+	}
+	me.list.Col(0).SetWidth(max(rest, ui.DpiX(160)))
 }
 
 type paintStruct struct {
