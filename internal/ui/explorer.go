@@ -52,7 +52,6 @@ const (
 	cmdCloseTab
 	cmdNextTab
 	cmdPrevTab
-	cmdDetails
 )
 
 // Explorer is the main window.
@@ -106,10 +105,10 @@ type Explorer struct {
 	sessions []*session // open tabs
 	active   int        // index of the active tab, -1 without tabs
 
-	details    win.RECT // the details pane, empty when hidden
 	fontNormal uintptr
-	fontBold   uintptr
-	fontTitle  uintptr
+	fontLarge  uintptr  // address bar
+	addrBox    win.RECT // the box around the address bar
+	addrFocus  bool
 }
 
 // Run shows the explorer and blocks until it is closed. version is the
@@ -136,7 +135,9 @@ func (me *Explorer) build() {
 
 	me.tabs = newTabStrip(me.wnd)
 	me.navBar = newToolbar(me.wnd, windowColor)
-	me.address = ui.NewEdit(me.wnd, ui.OptsEdit().Position(ui.Dpi(160, 9)).Width(ui.DpiX(600)))
+	// The address bar is a borderless edit centred in a box drawn by paint().
+	me.address = ui.NewEdit(me.wnd, ui.OptsEdit().Position(ui.Dpi(160, 9)).Width(ui.DpiX(600)).
+		WndExStyle(co.WS_EX_LEFT))
 	me.cmdBar = newToolbar(me.wnd, windowColor)
 
 	// The tree and list are borderless and positioned by layout().
@@ -160,9 +161,9 @@ func (me *Explorer) build() {
 		Column("Status", ui.DpiX(120)))
 
 	me.statusText = ui.NewStatic(me.wnd, ui.OptsStatic().Text("Not connected").
-		Position(ui.Dpi(12, 530)).Size(ui.Dpi(500, 20)).CtrlStyle(co.SS_LEFT|co.SS_NOPREFIX|co.SS_ENDELLIPSIS))
+		Position(ui.Dpi(12, 530)).Size(ui.Dpi(500, 20)).CtrlStyle(co.SS_LEFT|co.SS_NOPREFIX|co.SS_ENDELLIPSIS|co.SS_CENTERIMAGE))
 	me.countText = ui.NewStatic(me.wnd, ui.OptsStatic().Text("").
-		Position(ui.Dpi(600, 530)).Size(ui.Dpi(240, 20)).CtrlStyle(co.SS_RIGHT|co.SS_NOPREFIX))
+		Position(ui.Dpi(600, 530)).Size(ui.Dpi(240, 20)).CtrlStyle(co.SS_RIGHT|co.SS_NOPREFIX|co.SS_CENTERIMAGE))
 	me.active = -1
 }
 
@@ -283,7 +284,6 @@ func (me *Explorer) updateButtons() {
 	default:
 		setStaticText(me.countText, fmt.Sprintf("%d items", len(me.entries)))
 	}
-	me.invalidateDetails()
 }
 
 // run executes work on a goroutine. done runs on the UI thread afterwards.
@@ -553,7 +553,6 @@ func (me *Explorer) loadStatuses() {
 					item.SetText(4, statusText(st[e.Path]))
 				}
 			}
-			me.invalidateDetails()
 		})
 	}()
 }

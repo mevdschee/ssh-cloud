@@ -148,12 +148,9 @@ renames temp to `<name> (2).<ext>` (next free number) and writes its hash file.
   Ctrl+Tab switches. Cut/copy and paste work within one connection.
 - Navigation row: Back, Forward, Up, Refresh and the address bar. One command
   bar: New folder | Cut, Copy, Paste, Rename, Delete | Upload, Download, Stop,
-  Transfers | Details, Check for updates. The connection manager opens from the + tab. Thin dividers between rows,
-  a plain status line at the bottom, the app icon on the window.
-- Details pane (toggle with Details or Alt+Shift+P, remembered): large icon,
-  name and type of the selection, then size, date modified, status, last
-  transfer, location and permissions; totals for a multiple selection; the
-  current folder when nothing is selected.
+  Transfers | Check for updates. The connection manager opens from the + tab.
+  Thin dividers between rows, a plain status line at the bottom, the app icon
+  on the window, and the title is always "SSH-Cloud".
 - Folder tree (loaded as you expand it, kept in step with the list) and a file
   list with Name, Date modified, Type, Size and Status. Real shell icons and
   type names; click a header to sort (folders first). Hash, claim and temp
@@ -184,7 +181,7 @@ renames temp to `<name> (2).<ext>` (next free number) and writes its hash file.
 
 ## Updates
 
-An update button (sync icon, next to Details) checks the latest GitHub
+An update button (sync icon, at the end of the command bar) checks the latest GitHub
 release on request. When it is newer, SSH-Cloud downloads the MSI in the
 progress window, starts `msiexec` and closes. Nothing is checked
 automatically and there is no setting for it. Development builds ("dev")
@@ -247,10 +244,10 @@ server. `ui` is Windows-only and tested by hand.
    from otp4win. First release: v0.1.0.
 9. Explorer polish after the first Windows test: toolbar backgrounds and
    spacing like Windows 11 Explorer, plain status line, window icon, tabs for
-   multiple connections, the details pane, and an update button.
+   multiple connections and an update button.
 
 Milestones 1 to 9 are done (1 to 8 were released as v0.1.0). Parts that need the Windows UI (drag out, the toolbars and theme,
-tabs, the details pane, Pageant, the updater) are only verified by testing on
+tabs, Pageant, the updater) are only verified by testing on
 Windows.
 
 ## Known weaknesses (accepted)

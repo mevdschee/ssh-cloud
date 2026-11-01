@@ -26,6 +26,7 @@ var (
 	procCreateFontIndirectW  = gdi32.NewProc("CreateFontIndirectW")
 	procSelectObject         = gdi32.NewProc("SelectObject")
 	procGetTextFaceW         = gdi32.NewProc("GetTextFaceW")
+	procGetTextMetricsW      = gdi32.NewProc("GetTextMetricsW")
 	procDeleteObject         = gdi32.NewProc("DeleteObject")
 	user32                   = syscall.NewLazyDLL("user32.dll")
 	procGetDC                = user32.NewProc("GetDC")
@@ -48,7 +49,6 @@ const (
 	ccsNoResize         = 0x0004
 	ccsNoParentAlign    = 0x0008
 	ccsNoDivider        = 0x0040
-	iImageNone          = -2
 	dwmaCornerPref      = 33 // DWMWA_WINDOW_CORNER_PREFERENCE
 	dwmaBackdropType    = 38 // DWMWA_SYSTEMBACKDROP_TYPE
 	dwmcpRound          = 2  // DWMWCP_ROUND
@@ -129,7 +129,6 @@ type tbButton struct {
 	icon     string
 	text     string // label, or tooltip for icon-only buttons
 	showText bool
-	check    bool // part of a check group
 }
 
 // toolbarStrings keeps button labels alive for the toolbars.
@@ -205,9 +204,6 @@ func addButtons(tb *ui.Toolbar, buttons []tbButton) {
 			if b.showText {
 				tbb.FsStyle |= co.BTNS_SHOWTEXT
 			}
-			if b.check {
-				tbb.FsStyle |= co.BTNS_CHECKGROUP
-			}
 			tbb.IString = &text[0]
 		}
 		h.SendMessage(co.TB_ADDBUTTONS, 1, win.LPARAM(unsafe.Pointer(&tbb)))
@@ -227,14 +223,6 @@ func fillToolbar(tb *ui.Toolbar, buttons []tbButton, size, padX, padY int) {
 	}
 	setupToolbar(tb, icons, size, padX, padY)
 	addButtons(tb, buttons)
-}
-
-func checkButton(tb *ui.Toolbar, id uint16, on bool) {
-	v := 0
-	if on {
-		v = 1
-	}
-	tb.Hwnd().SendMessage(co.TB_CHECKBUTTON, win.WPARAM(id), win.LPARAM(v))
 }
 
 // toolbarSize returns the size a toolbar needs for all its buttons.
@@ -288,39 +276,48 @@ type nonClientMetrics struct {
 	paddedBorderWidth                      int32
 }
 
-// uiFonts returns the Windows 11 UI font (Segoe UI Variable Text, or the
-// system message font when it is not installed, as on Windows 10) in three
-// variants: normal, semibold, and a larger semibold for titles.
-func uiFonts() (normal, bold, title uintptr) {
+// uiFont returns the Windows 11 UI font (Segoe UI Variable Text) at the size
+// of the system message font plus grow pixels, or the system message font
+// itself when the variable font is not installed (as under Wine).
+func uiFont(grow int) uintptr {
 	var ncm nonClientMetrics
 	ncm.size = uint32(unsafe.Sizeof(ncm))
 	if r, _, _ := procSystemParametersInfo.Call(spiNonClientMetrics, uintptr(ncm.size), uintptr(unsafe.Pointer(&ncm)), 0); r == 0 {
-		return 0, 0, 0
+		return 0
 	}
-	lf := ncm.messageFont
+	base := ncm.messageFont
+	if base.height < 0 { // negative: character height in pixels
+		base.height -= int32(grow)
+	} else {
+		base.height += int32(grow)
+	}
+	lf := base
 	const face = "Segoe UI Variable Text"
-	try := lf
-	try.faceName = [32]uint16{}
-	copy(try.faceName[:], syscall.StringToUTF16(face))
-	h, _, _ := procCreateFontIndirectW.Call(uintptr(unsafe.Pointer(&try)))
+	lf.faceName = [32]uint16{}
+	copy(lf.faceName[:], syscall.StringToUTF16(face))
+	h, _, _ := procCreateFontIndirectW.Call(uintptr(unsafe.Pointer(&lf)))
 	if h != 0 && fontFace(h) == face {
-		lf = try
+		return h
 	}
 	if h != 0 {
 		procDeleteObject.Call(h)
 	}
-	create := func(f logFont) uintptr {
-		h, _, _ := procCreateFontIndirectW.Call(uintptr(unsafe.Pointer(&f)))
-		return h
+	h, _, _ = procCreateFontIndirectW.Call(uintptr(unsafe.Pointer(&base)))
+	return h
+}
+
+// fontHeight returns the line height of a font in pixels.
+func fontHeight(hFont uintptr) int {
+	hdc, _, _ := procGetDC.Call(0)
+	if hdc == 0 {
+		return 0
 	}
-	normal = create(lf)
-	b := lf
-	b.weight = 600
-	bold = create(b)
-	t := b
-	t.height = lf.height * 3 / 2
-	title = create(t)
-	return normal, bold, title
+	defer procReleaseDC.Call(0, hdc)
+	old, _, _ := procSelectObject.Call(hdc, hFont)
+	defer procSelectObject.Call(hdc, old)
+	var tm [64]byte // TEXTMETRICW; tmHeight is the first field
+	procGetTextMetricsW.Call(hdc, uintptr(unsafe.Pointer(&tm[0])))
+	return int(int32(uint32(tm[0]) | uint32(tm[1])<<8 | uint32(tm[2])<<16 | uint32(tm[3])<<24))
 }
 
 // fontFace returns the face name GDI actually picked for a font.

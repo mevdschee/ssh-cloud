@@ -37,7 +37,6 @@ func accelerators() win.HACCEL {
 		win.ACCEL{FVirt: v | ctrl, Key: co.VK('W'), Cmd: cmdCloseTab},
 		win.ACCEL{FVirt: v | ctrl, Key: co.VK_TAB, Cmd: cmdNextTab},
 		win.ACCEL{FVirt: v | ctrl | shift, Key: co.VK_TAB, Cmd: cmdPrevTab},
-		win.ACCEL{FVirt: v | alt | shift, Key: co.VK('P'), Cmd: cmdDetails},
 	)
 	if err != nil {
 		slog.Error("accelerator table", "err", err)
@@ -99,7 +98,6 @@ func (me *Explorer) commandEvents() {
 	on(cmdCloseTab, func() { me.closeTab(me.active) })
 	on(cmdNextTab, func() { me.nextTab(1) })
 	on(cmdPrevTab, func() { me.nextTab(-1) })
-	on(cmdDetails, me.toggleDetails)
 	on(cmdAddress, func() {
 		me.address.Focus()
 		me.address.SetSelection(0, -1)

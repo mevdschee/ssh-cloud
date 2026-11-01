@@ -28,7 +28,6 @@ const (
 	tbDelete
 	tbTransfers
 	tbStop
-	tbDetails
 	tbUpdate
 )
 
@@ -45,9 +44,11 @@ var (
 
 // Windows 11 Explorer colours (COLORREF, 0x00BBGGRR).
 const (
-	windowColor  = 0x00FFFFFF // content, navigation row and command bar
-	bandColor    = 0x00F3F3F3 // the tab band at the top
-	dividerColor = 0x00E5E5E5 // thin lines between the rows
+	windowColor        = 0x00FFFFFF // content, navigation row and command bar
+	bandColor          = 0x00F3F3F3 // the tab band at the top
+	dividerColor       = 0x00E5E5E5 // thin lines between the rows
+	addressBorderColor = 0x00D6D6D6
+	accentColor        = 0x00C06700 // Windows 11 default accent #0067C0
 )
 
 var windowBrush, _, _ = procCreateSolidBrush.Call(windowColor)
@@ -56,15 +57,14 @@ var windowBrush, _, _ = procCreateSolidBrush.Call(windowColor)
 // controls exist.
 func (me *Explorer) styleWindow() {
 	setWin11Frame(me.wnd.Hwnd())
-	me.fontNormal, me.fontBold, me.fontTitle = uiFonts()
+	me.fontNormal = uiFont(0)
+	me.fontLarge = uiFont(2)
 	applyFont(me.wnd.Hwnd(), me.fontNormal)
+	me.address.Hwnd().SendMessage(co.WM_SETFONT, win.WPARAM(me.fontLarge), 1)
 	setExplorerTheme(me.list.Hwnd())
 	setExplorerTheme(me.tree.Hwnd())
 	me.tree.SetExtendedStyle(true, co.TVS_EX_FADEINOUTEXPANDOS|co.TVS_EX_DOUBLEBUFFER)
 	me.tree.Hwnd().SendMessage(co.TVM_SETITEMHEIGHT, win.WPARAM(ui.DpiY(28)), 0)
-	// Inner margins in the address bar.
-	m := ui.DpiX(8)
-	me.address.Hwnd().SendMessage(co.EM_SETMARGINS, 0x1|0x2, win.LPARAM(uint32(m)|uint32(m)<<16))
 
 	size := iconSize(me.wnd.Hwnd())
 	me.tabs.setup(me.fontNormal, me.wnd.Hwnd().GetDpiForWindow())
@@ -89,34 +89,10 @@ func (me *Explorer) styleWindow() {
 		{id: tbStop, icon: "stop", text: "Stop", showText: true},
 		{id: tbTransfers, icon: "history", text: "Transfers", showText: true},
 		{},
-		{id: tbDetails, icon: "panel_right", text: "Details", showText: true},
 		{id: tbUpdate, icon: "arrow_sync", text: "Check for updates"},
 	}, size, ui.DpiX(20), ui.DpiY(14))
-	// The details toggle shows its state like Explorer's: pressed when on.
-	setButtonStyle(me.cmdBar, tbDetails, co.BTNS_AUTOSIZE|co.BTNS_SHOWTEXT|co.BTNS_CHECK)
-	checkButton(me.cmdBar, tbDetails, me.cfg.ShowDetails)
 	me.styled = true
 	slog.Debug("window styled", "iconSize", size, "dpi", me.wnd.Hwnd().GetDpiForWindow())
-}
-
-// setButtonStyle changes a toolbar button's style (TB_SETBUTTONINFO).
-type tbButtonInfo struct {
-	size, mask uint32
-	idCommand  int32
-	image      int32
-	state      uint8
-	style      uint8
-	cx         uint16
-	lParam     uintptr
-	text       uintptr
-	cchText    int32
-	_          int32
-}
-
-func setButtonStyle(tb *ui.Toolbar, id uint16, style co.BTNS) {
-	bi := tbButtonInfo{mask: 0x8, style: uint8(style)} // TBIF_STYLE
-	bi.size = uint32(unsafe.Sizeof(bi))
-	tb.Hwnd().SendMessage(co.WM_USER+64, win.WPARAM(id), win.LPARAM(unsafe.Pointer(&bi))) // TB_SETBUTTONINFOW
 }
 
 func (me *Explorer) toolbarEvents() {
@@ -141,25 +117,20 @@ func (me *Explorer) toolbarEvents() {
 			me.setStatus("Stopping...")
 		}
 	})
-	on(tbDetails, me.toggleDetails)
 	on(tbUpdate, me.checkForUpdates)
 	me.tabEvents()
 	me.wnd.On().WmPaint(me.paint)
+	invalidateBox := func() {
+		b := me.addrBox
+		procInvalidateRect.Call(uintptr(me.wnd.Hwnd()), uintptr(unsafe.Pointer(&b)), 1)
+	}
+	me.address.On().EnSetFocus(func() { me.addrFocus = true; invalidateBox() })
+	me.address.On().EnKillFocus(func() { me.addrFocus = false; invalidateBox() })
 	// Labels on the window (the status line) get the window background.
 	me.wnd.On().WmCtlColorStatic(func(p ui.WmCtlColor) win.HBRUSH {
 		p.Hdc().SetBkColor(win.COLORREF(windowColor))
 		return win.HBRUSH(windowBrush)
 	})
-}
-
-// toggleDetails shows or hides the details pane (Alt+Shift+P).
-func (me *Explorer) toggleDetails() {
-	me.cfg.ShowDetails = !me.cfg.ShowDetails
-	checkButton(me.cmdBar, tbDetails, me.cfg.ShowDetails)
-	if err := me.cfg.Save(me.cfgDir); err != nil {
-		slog.Error("save settings", "err", err)
-	}
-	me.layout()
 }
 
 func move(h win.HWND, x, y, cx, cy int) {
@@ -179,8 +150,8 @@ func move(h win.HWND, x, y, cx, cy int) {
 
 // layout positions everything, top to bottom: the grey tab band, the
 // navigation row (back, forward, up, refresh, address bar), a divider, the
-// command bar (Details and Connections on the right), a divider, then the
-// folder tree, the file list and the details pane, and the status line.
+// command bar, a divider, then the folder tree and the file list, and the
+// status line.
 func (me *Explorer) layout() {
 	if !me.styled {
 		return
@@ -198,8 +169,12 @@ func (me *Explorer) layout() {
 	nav := toolbarSize(me.navBar)
 	row1Y, row1H := me.bandHeight+ui.DpiY(6), max(int(nav.Cy), ui.DpiY(40))
 	move(me.navBar.Hwnd(), m, row1Y+(row1H-int(nav.Cy))/2, int(nav.Cx), int(nav.Cy))
-	addrX, addrH := m+int(nav.Cx)+ui.DpiX(12), ui.DpiY(30)
-	move(me.address.Hwnd(), addrX, row1Y+(row1H-addrH)/2, cw-addrX-ui.DpiX(12), addrH)
+	// The address box; the edit inside is one text line high and centred.
+	addrX, addrH := m+int(nav.Cx)+ui.DpiX(12), ui.DpiY(32)
+	boxTop := row1Y + (row1H-addrH)/2
+	me.addrBox = win.RECT{Left: int32(addrX), Top: int32(boxTop), Right: int32(cw - ui.DpiX(12)), Bottom: int32(boxTop + addrH)}
+	editH := fontHeight(me.fontLarge) + 2
+	move(me.address.Hwnd(), addrX+ui.DpiX(10), boxTop+(addrH-editH)/2, cw-addrX-ui.DpiX(12)-ui.DpiX(20), editH)
 	me.navLineY = row1Y + row1H + ui.DpiY(6)
 
 	cmd := toolbarSize(me.cmdBar)
@@ -207,21 +182,14 @@ func (me *Explorer) layout() {
 	move(me.cmdBar.Hwnd(), m, row2Y, min(int(cmd.Cx), cw-2*m), int(cmd.Cy))
 	me.contentTop = row2Y + row2H + ui.DpiY(4)
 
-	statusH := ui.DpiY(28)
-	textH := ui.DpiY(20)
-	statusY := ch - statusH + (statusH-textH)/2
-	move(me.statusText.Hwnd(), ui.DpiX(12), statusY, cw/2, textH)
-	move(me.countText.Hwnd(), cw/2, statusY, cw/2-ui.DpiX(16), textH)
+	// The status labels fill the footer; SS_CENTERIMAGE centres the text.
+	statusH := ui.DpiY(30)
+	move(me.statusText.Hwnd(), ui.DpiX(12), ch-statusH, cw/2, statusH)
+	move(me.countText.Hwnd(), cw/2, ch-statusH, cw/2-ui.DpiX(16), statusH)
 
 	top, h := me.contentTop+1, ch-me.contentTop-1-statusH
 	me.treeWidth = ui.DpiX(220)
 	listW := cw - me.treeWidth
-	me.details = win.RECT{}
-	if me.cfg.ShowDetails && cw > ui.DpiX(700) {
-		dw := ui.DpiX(280)
-		listW -= dw + 1
-		me.details = win.RECT{Left: int32(cw - dw), Top: int32(top), Right: int32(cw), Bottom: int32(top + h)}
-	}
 	move(me.tree.Hwnd(), 0, top, me.treeWidth, h)
 	move(me.list.Hwnd(), me.treeWidth, top, listW, h)
 	me.fitColumns(listW)
@@ -251,7 +219,7 @@ type paintStruct struct {
 }
 
 // paint draws what is not a control: the tab band, the dividers and the
-// details pane (the window background is white).
+// (the window background is white).
 func (me *Explorer) paint() {
 	var ps paintStruct
 	hdc, _, _ := procBeginPaint.Call(uintptr(me.wnd.Hwnd()), uintptr(unsafe.Pointer(&ps)))
@@ -264,16 +232,14 @@ func (me *Explorer) paint() {
 	for _, y := range []int32{int32(me.navLineY), int32(me.contentTop)} {
 		fillRect(hdc, win.RECT{Top: y, Right: rc.Right, Bottom: y + 1}, dividerColor)
 	}
-	if me.details.Right > 0 {
-		d := me.details
-		fillRect(hdc, win.RECT{Left: d.Left - 1, Top: d.Top, Right: d.Left, Bottom: d.Bottom}, dividerColor)
-		me.paintDetails(hdc, d)
-	}
-}
-
-func (me *Explorer) invalidateDetails() {
-	if me.details.Right > 0 {
-		d := me.details
-		procInvalidateRect.Call(uintptr(me.wnd.Hwnd()), uintptr(unsafe.Pointer(&d)), 1)
+	// Address box: 1px border with rounded corners, white inside, and an
+	// accent underline while the address bar has focus.
+	if b := me.addrBox; b.Right > b.Left {
+		radius := int32(ui.DpiX(4))
+		roundRect(hdc, win.RECT{Left: b.Left, Top: b.Top, Right: b.Right - 1, Bottom: b.Bottom - 1}, radius, addressBorderColor)
+		roundRect(hdc, win.RECT{Left: b.Left + 1, Top: b.Top + 1, Right: b.Right - 2, Bottom: b.Bottom - 2}, radius-1, windowColor)
+		if me.addrFocus {
+			fillRect(hdc, win.RECT{Left: b.Left + radius, Top: b.Bottom - 2, Right: b.Right - radius, Bottom: b.Bottom}, accentColor)
+		}
 	}
 }

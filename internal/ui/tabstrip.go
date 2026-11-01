@@ -18,6 +18,11 @@ import (
 )
 
 var (
+	procDrawTextW              = user32.NewProc("DrawTextW")
+	procSetBkMode              = gdi32.NewProc("SetBkMode")
+	procSetTextColor           = gdi32.NewProc("SetTextColor")
+	comctl32                   = syscall.NewLazyDLL("comctl32.dll")
+	procImageListDraw          = comctl32.NewProc("ImageList_Draw")
 	procCreateCompatibleDC     = gdi32.NewProc("CreateCompatibleDC")
 	procCreateCompatibleBitmap = gdi32.NewProc("CreateCompatibleBitmap")
 	procBitBlt                 = gdi32.NewProc("BitBlt")
@@ -29,6 +34,12 @@ var (
 )
 
 const (
+	dtLeft        = 0x0000
+	dtSingleLine  = 0x0020
+	dtNoPrefix    = 0x0800
+	dtEndEllipsis = 0x8000
+
+	textColor          = 0x001A1A1A
 	tabHoverColor      = 0x00EAEAEA
 	tabCloseHoverColor = 0x00DCDCDC
 	tabSeparatorColor  = 0x00D0D0D0
