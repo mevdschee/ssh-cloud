@@ -194,6 +194,11 @@ internal/icons/        Fluent SVG icons, rasterised at any size and colour
 internal/logging/      log file setup
 internal/sshtest/      in-process SSH server for tests (OpenSSH rename rules)
 internal/ui/           windigo windows, toolbars, dialogs, drag and drop
+tools/genicon/         renders the app icon (Fluent cloud) into winres/
+tools/mkico/           packs the PNGs into the installer's .ico
+winres/                icon, manifest and version info for go-winres
+installer/             MSI definition (wixl)
+run.sh, release.sh     build and run with Wine; build the MSI and publish
 ```
 
 Everything outside `ui` is plain Go and tested on Linux against the in-process

@@ -15,6 +15,9 @@ import (
 	"github.com/rodrigocfd/windigo/win"
 )
 
+// version is set at build time by release.sh (-ldflags -X main.version=...).
+var version = "dev"
+
 func main() {
 	runtime.LockOSThread() // the Win32 GUI is single-threaded
 
@@ -29,15 +32,15 @@ func main() {
 	} else {
 		defer closeLog()
 	}
-	version := "dev"
+	commit := ""
 	if bi, ok := debug.ReadBuildInfo(); ok {
 		for _, s := range bi.Settings {
 			if s.Key == "vcs.revision" {
-				version = s.Value
+				commit = s.Value
 			}
 		}
 	}
-	slog.Info("start", "version", version, "go", runtime.Version(), "settings", dir, "log", logFile)
+	slog.Info("start", "version", version, "commit", commit, "go", runtime.Version(), "settings", dir, "log", logFile)
 	defer func() {
 		if r := recover(); r != nil {
 			slog.Error("crash", "panic", fmt.Sprint(r), "stack", string(debug.Stack()))
