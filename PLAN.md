@@ -43,9 +43,12 @@ then prompt, which is the safe side.)
 3. **Target does not exist**: rename temp to target, then write the hash file. If
    the rename fails because the target now exists, someone else just created it:
    go to the prompt.
-4. **Target exists**: claim it by renaming it to `.<name>.claim-<random>`. Only one
-   client can win this rename; a loser retries for a moment and then sees the
-   winner's new version.
+4. **Target exists**: claim it by renaming it to `.<name>.claim-<random>` with
+   `posix-rename` (one atomic `rename(2)` on the server; the claim name is
+   unique, so nothing is overwritten). Only one client can win this rename; a
+   loser retries for a moment and then sees the winner's new version. (Plain
+   SFTP rename is not used here: OpenSSH implements it as link + unlink, which
+   is not exclusive for a contested source.)
    - The hash file's hash equals the transfer list entry (and its size equals the
      claimed file's size): nobody else changed it. Delete the hash file, rename
      temp to target, write the new hash file, delete the claim.

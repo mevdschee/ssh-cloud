@@ -25,6 +25,10 @@ type Client struct {
 	agent io.Closer
 	root  string // absolute, cleaned server path of the cloud folder
 
+	probeOnce sync.Once
+	replaces  bool
+	probeErr  error
+
 	done      chan struct{}
 	closeOnce sync.Once
 	mu        sync.Mutex
@@ -74,7 +78,7 @@ func Dial(ctx context.Context, cfg Config) (*Client, error) {
 	_ = conn.SetDeadline(time.Time{})
 	sshClient := ssh.NewClient(cc, chans, reqs)
 
-	sftpClient, err := sftp.NewClient(sshClient)
+	sftpClient, err := sftp.NewClient(sshClient, sftp.UseFstat(true))
 	if err != nil {
 		sshClient.Close()
 		closeAgent()

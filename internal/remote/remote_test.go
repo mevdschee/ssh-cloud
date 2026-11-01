@@ -10,40 +10,21 @@ import (
 	"testing"
 
 	"github.com/mevdschee/ssh-cloud/internal/remote"
+	"github.com/mevdschee/ssh-cloud/internal/sshtest"
 	"golang.org/x/crypto/ssh"
 )
 
 type fixture struct {
-	root   string // cloud root on the "server" (a local temp dir)
+	srv    *sshtest.Server
+	root   string
 	cfg    remote.Config
 	client *remote.Client
 }
 
 func setup(t *testing.T) *fixture {
 	t.Helper()
-	hostKey, _ := newKey(t)
-	clientKey, clientPEM := newKey(t)
-	srv := startServer(t, hostKey, clientKey.PublicKey())
-
-	local := t.TempDir()
-	keyFile := filepath.Join(local, "id_ed25519")
-	if err := os.WriteFile(keyFile, clientPEM, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	host, port, _ := net.SplitHostPort(srv.addr)
-	portNum, _ := strconv.Atoi(port)
-
-	f := &fixture{root: t.TempDir()}
-	f.cfg = remote.Config{
-		Host:           host,
-		Port:           portNum,
-		User:           "team",
-		Root:           f.root,
-		KeyFile:        keyFile,
-		KnownHostsFile: filepath.Join(local, "known_hosts"),
-		TrustHost:      func(string, ssh.PublicKey) bool { return true },
-		KeepAlive:      -1,
-	}
+	srv := sshtest.Start(t, sshtest.Options{})
+	f := &fixture{srv: srv, root: srv.Root, cfg: srv.Config()}
 	c, err := remote.Dial(context.Background(), f.cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -51,6 +32,22 @@ func setup(t *testing.T) *fixture {
 	t.Cleanup(func() { c.Close() })
 	f.client = c
 	return f
+}
+
+func writeFile(t *testing.T, root, rel, content string) {
+	t.Helper()
+	p := filepath.Join(root, filepath.FromSlash(rel))
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func exists(root, rel string) bool {
+	_, err := os.Lstat(filepath.Join(root, filepath.FromSlash(rel)))
+	return err == nil
 }
 
 func TestHostKeyTrustOnFirstUse(t *testing.T) {
@@ -85,11 +82,11 @@ func TestHostKeyMismatch(t *testing.T) {
 
 	// A different server on the same address would present another key;
 	// simulate by writing a wrong key for this host into known_hosts.
-	other, _ := newKey(t)
+	other, _ := sshtest.NewKey(t)
 	cfg := f.cfg
 	cfg.KnownHostsFile = filepath.Join(t.TempDir(), "known_hosts")
 	addr := net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port))
-	line := knownHostsLine(addr, other.PublicKey())
+	line := sshtest.KnownHostsLine(addr, other.PublicKey())
 	if err := os.WriteFile(cfg.KnownHostsFile, []byte(line+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -101,7 +98,7 @@ func TestHostKeyMismatch(t *testing.T) {
 
 func TestWrongClientKeyRejected(t *testing.T) {
 	f := setup(t)
-	_, otherPEM := newKey(t)
+	_, otherPEM := sshtest.NewKey(t)
 	cfg := f.cfg
 	cfg.KeyFile = filepath.Join(t.TempDir(), "other")
 	if err := os.WriteFile(cfg.KeyFile, otherPEM, 0o600); err != nil {

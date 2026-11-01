@@ -7,11 +7,17 @@
 //	sshcloud-cli ... rename docs/report.docx final.docx
 //	sshcloud-cli ... rm docs/old
 //	sshcloud-cli ... mkdir docs/new
+//	sshcloud-cli ... get docs/report.docx report.docx
+//	sshcloud-cli ... put report.docx docs/report.docx [replace|keep-both]
+//
+// get and put use the same transfer list and collision check as the app; the
+// list is kept per host in the user's config directory.
 package main
 
 import (
 	"bufio"
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -19,6 +25,8 @@ import (
 	"strings"
 
 	"github.com/mevdschee/ssh-cloud/internal/remote"
+	"github.com/mevdschee/ssh-cloud/internal/transfer"
+	"github.com/mevdschee/ssh-cloud/internal/transferlog"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/term"
 )
@@ -33,7 +41,7 @@ func main() {
 	flag.StringVar(&cfg.KeyFile, "key", "", "private key file (default: ssh-agent only)")
 	flag.StringVar(&cfg.KnownHostsFile, "known-hosts", filepath.Join(home, ".ssh", "known_hosts"), "known_hosts file")
 	flag.Usage = func() {
-		fmt.Fprintln(os.Stderr, "usage: sshcloud-cli [flags] ls|stat|mv|rename|rm|mkdir args...")
+		fmt.Fprintln(os.Stderr, "usage: sshcloud-cli [flags] ls|stat|mv|rename|rm|mkdir|get|put args...")
 		flag.PrintDefaults()
 	}
 	flag.Parse()
@@ -50,12 +58,19 @@ func main() {
 	}
 	defer c.Close()
 
-	if err := run(c, flag.Arg(0), flag.Args()[1:]); err != nil {
+	logDir, _ := os.UserConfigDir()
+	log, err := transferlog.Open(filepath.Join(logDir, "SSH-Cloud", "transfers-cli-"+cfg.Host+".jsonl"))
+	if err != nil {
+		fail(err)
+	}
+	defer log.Close()
+
+	if err := run(c, transfer.New(c, log), flag.Arg(0), flag.Args()[1:]); err != nil {
 		fail(err)
 	}
 }
 
-func run(c *remote.Client, cmd string, args []string) error {
+func run(c *remote.Client, e *transfer.Engine, cmd string, args []string) error {
 	need := func(n int) error {
 		if len(args) != n {
 			return fmt.Errorf("%s needs %d argument(s)", cmd, n)
@@ -110,6 +125,40 @@ func run(c *remote.Client, cmd string, args []string) error {
 			return err
 		}
 		return c.MkdirAll(args[0])
+	case "get":
+		if err := need(2); err != nil {
+			return err
+		}
+		res, err := e.Download(context.Background(), args[0], args[1])
+		if err == nil {
+			fmt.Printf("downloaded %s (%d bytes, sha256 %s)\n", res.Path, res.Size, res.Hash)
+		}
+		return err
+	case "put":
+		if len(args) < 2 || len(args) > 3 {
+			return fmt.Errorf("put needs: local remote [replace|keep-both]")
+		}
+		mode := transfer.Check
+		if len(args) == 3 {
+			switch args[2] {
+			case "replace":
+				mode = transfer.Replace
+			case "keep-both":
+				mode = transfer.KeepBoth
+			default:
+				return fmt.Errorf("unknown mode %q", args[2])
+			}
+		}
+		res, err := e.Upload(context.Background(), args[0], args[1], mode)
+		if err == nil {
+			fmt.Printf("%s: %s (%d bytes)\n", res.Outcome, res.Path, res.Size)
+		}
+		var ce *transfer.ConflictError
+		if errors.As(err, &ce) {
+			e.Skip(args[0], args[1])
+			return fmt.Errorf("%w; rerun with replace or keep-both", err)
+		}
+		return err
 	}
 	return fmt.Errorf("unknown command %q", cmd)
 }

@@ -1,6 +1,8 @@
 package remote
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"path"
 	"strings"
@@ -70,4 +72,31 @@ func validName(p string) error {
 // isWithin reports whether p equals dir or lies below it.
 func isWithin(p, dir string) bool {
 	return p == dir || strings.HasPrefix(p, dir+"/")
+}
+
+// TempName returns a fresh hidden temp file name for an upload of name.
+func TempName(name string) string { return "." + name + tmpMarker + randomID() }
+
+// ClaimName returns a fresh hidden claim file name for name.
+func ClaimName(name string) string { return "." + name + claimMarker + randomID() }
+
+// ClaimOf reports whether file is a claim file and returns the name of the
+// file it claims.
+func ClaimOf(file string) (string, bool) {
+	if !strings.HasPrefix(file, ".") {
+		return "", false
+	}
+	i := strings.LastIndex(file, claimMarker)
+	if i <= 1 {
+		return "", false
+	}
+	return file[1:i], true
+}
+
+func randomID() string {
+	b := make([]byte, 8)
+	if _, err := rand.Read(b); err != nil {
+		panic(err)
+	}
+	return hex.EncodeToString(b)
 }
