@@ -334,13 +334,20 @@ type nonClientMetrics struct {
 // uiFont returns the Windows 11 UI font (Segoe UI Variable Text) at the size
 // of the system message font plus grow pixels, or the system message font
 // itself when the variable font is not installed (as under Wine).
-func uiFont(grow int) uintptr {
+func uiFont(grow int) uintptr { return uiFontWeight(grow, 0) }
+
+// uiFontWeight is uiFont with a font weight (0 keeps the normal weight;
+// 600 is semibold).
+func uiFontWeight(grow, weight int) uintptr {
 	var ncm nonClientMetrics
 	ncm.size = uint32(unsafe.Sizeof(ncm))
 	if r, _, _ := procSystemParametersInfo.Call(spiNonClientMetrics, uintptr(ncm.size), uintptr(unsafe.Pointer(&ncm)), 0); r == 0 {
 		return 0
 	}
 	base := ncm.messageFont
+	if weight > 0 {
+		base.weight = int32(weight)
+	}
 	if base.height < 0 { // negative: character height in pixels
 		base.height -= int32(grow)
 	} else {

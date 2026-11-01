@@ -155,7 +155,7 @@ renames temp to `<name> (2).<ext>` (next free number) and writes its hash file.
   Ctrl+Tab switches. Cut/copy and paste work within one connection.
 - Navigation row: Back, Forward, Up, Refresh and the address bar. One command
   bar: New folder | Cut, Copy, Paste, Rename, Delete | Upload, Download |
-  "..." (overflow menu with Transfers and Check for updates). Long operations
+  "..." (overflow menu: Transfers, then About ...). Long operations
   are cancelled in their progress window; there is no separate Stop button.
   Icon-only buttons are 40 px wide with 8 px between them, like Explorer (the
   spacing is skipped under Wine, which lacks TB_SETMETRICS). The connection
@@ -193,11 +193,19 @@ renames temp to `<name> (2).<ext>` (next free number) and writes its hash file.
 
 ## Updates
 
-"Check for updates" in the "..." menu at the end of the command bar checks the latest GitHub
+"Check for updates" in the About window ("..." menu, About ...) checks the latest GitHub
 release on request. When it is newer, SSH-Cloud downloads the MSI in the
 progress window, starts `msiexec` and closes. Nothing is checked
 automatically and there is no setting for it. Development builds ("dev")
 do not update.
+
+## About
+
+"About ..." (in the "..." menu) shows, all left aligned, the app icon
+(rendered at the exact size, so it is sharp) and the name, version, a
+one-line description, the author's copyright, "Released under the MIT
+License", the GitHub repository (blue and underlined, opens the browser) and
+the icon credits, with "Check for updates" and "Close".
 
 ## Logging
 
