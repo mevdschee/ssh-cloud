@@ -19,11 +19,11 @@ database, no vendor. Just a Windows window on a folder on your server.
 
 ## Get started
 
-Install the MSI from the [releases](https://github.com/mevdschee/ssh-cloud/releases)
-(Windows 11; it also runs under Wine), run SSH-Cloud from the Start menu, enter
-your server, username and remote folder, and you have a cloud. Log in with
-your SSH agent, Pageant, a key file or a password. Use "Check for updates" in
-the "..." menu to get new versions.
+You need to be on Windows 11. Install the MSI from the
+[releases](https://github.com/mevdschee/ssh-cloud/releases). Run SSH-Cloud from
+the Start menu, enter your server, username and remote folder, and you have a
+cloud. Log in with your SSH agent, Pageant, a key file or a password. Use "Check
+for updates" in the "..." menu to get new versions.
 
 ## Build
 
@@ -34,6 +34,31 @@ go test ./...            # everything except the window is tested on any OS
 ./release.sh [minor]     # build the MSI and publish a GitHub release
 ```
 
+## Why? Other tools
+
+There are great open source tools for files on a SFTP server. SSH-Cloud exists
+because none of them is as simple and easy to use and learn.
+
+- **File transfer clients:** [WinSCP](https://winscp.net),
+  [FileZilla](https://filezilla-project.org) and
+  [Cyberduck](https://cyberduck.io): powerful clients with many protocols,
+  two-pane views, sync and scripting.
+- **Drive mounts:** [SSHFS-Win](https://github.com/winfsp/sshfs-win) and
+  [rclone mount](https://rclone.org/commands/rclone_mount/) make the server look
+  like a local drive that every application can use directly.
+- **Sync tools:** [rclone](https://rclone.org) and
+  [Syncthing](https://syncthing.net) keep copies in sync on several machines.
+- **Self-hosted cloud suites:** [Nextcloud](https://nextcloud.com) and
+  [Seafile](https://www.seafile.com) give you a complete cloud with their own
+  server software.
+- **SSH clients with a file browser:**
+  [electerm](https://github.com/electerm/electerm) and
+  [Muon SSH](https://github.com/devlinx9/muon-ssh) combine a terminal with SFTP.
+
+Any of these projects has more features and a more complicated user interface.
+
 ## License
 
-MIT. Icons from [Fluent UI System Icons](https://github.com/microsoft/fluentui-system-icons) (MIT).
+MIT. Icons from
+[Fluent UI System Icons](https://github.com/microsoft/fluentui-system-icons)
+(MIT).
