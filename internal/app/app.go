@@ -17,6 +17,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/mevdschee/ssh-cloud/internal/dragdata"
 	"github.com/mevdschee/ssh-cloud/internal/remote"
 	"github.com/mevdschee/ssh-cloud/internal/transfer"
 	"github.com/mevdschee/ssh-cloud/internal/transferlog"
@@ -472,4 +473,47 @@ func (a *App) walk(ctx context.Context, dir string, fn func(p string)) error {
 		}
 	}
 	return nil
+}
+
+// DragItems lists the files and folders of a selection for a drag to
+// Windows Explorer, recursively, with names relative to the selection's
+// folder. Folders come before their contents. Only metadata is read.
+func (a *App) DragItems(ctx context.Context, entries []remote.Entry) ([]dragdata.Item, error) {
+	var items []dragdata.Item
+	var add func(e remote.Entry, rel string) error
+	add = func(e remote.Entry, rel string) error {
+		items = append(items, dragdata.Item{
+			Name: dragdata.WindowsName(rel), Remote: e.Path, IsDir: e.IsDir, Size: e.Size, ModTime: e.ModTime,
+		})
+		if !e.IsDir {
+			return nil
+		}
+		children, err := a.List(ctx, e.Path)
+		if err != nil {
+			return err
+		}
+		for _, c := range children {
+			if err := add(c, rel+"/"+c.Name); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	for _, e := range entries {
+		if err := add(e, e.Name); err != nil {
+			return nil, err
+		}
+	}
+	return items, nil
+}
+
+// DownloadFile downloads one file to an exact local path (used when Windows
+// Explorer asks for a dragged file's content).
+func (a *App) DownloadFile(ctx context.Context, remotePath, localPath string) error {
+	_, e, err := a.conn(ctx)
+	if err != nil {
+		return err
+	}
+	_, err = e.Download(ctx, remotePath, localPath)
+	return err
 }

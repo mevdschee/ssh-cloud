@@ -11,7 +11,6 @@ import (
 	"github.com/mevdschee/ssh-cloud/internal/config"
 	"github.com/mevdschee/ssh-cloud/internal/logging"
 	"github.com/mevdschee/ssh-cloud/internal/ui"
-	"github.com/rodrigocfd/windigo/co"
 	wui "github.com/rodrigocfd/windigo/ui"
 	"github.com/rodrigocfd/windigo/win"
 )
@@ -47,8 +46,11 @@ func main() {
 		}
 	}()
 
-	_, _ = win.CoInitializeEx(co.COINIT_APARTMENTTHREADED | co.COINIT_DISABLE_OLE1DDE)
-	defer win.CoUninitialize()
+	// OLE (not only COM) is needed for drag and drop to Windows Explorer.
+	if err := win.OleInitialize(); err != nil {
+		slog.Error("OleInitialize", "err", err)
+	}
+	defer win.OleUninitialize()
 
 	cfg, err := config.Load(dir)
 	if err != nil {

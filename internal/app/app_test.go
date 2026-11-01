@@ -167,3 +167,42 @@ func TestReconnectAfterConnectionLoss(t *testing.T) {
 		t.Fatalf("list should reconnect, got %v", got)
 	}
 }
+
+func TestDragItems(t *testing.T) {
+	srv := sshtest.Start(t, sshtest.Options{})
+	srv.Write("docs/proj/a.txt", "a")
+	srv.Write("docs/proj/sub/b.txt", "bb")
+	srv.Write("docs/top.txt", "t")
+	a := open(t, srv)
+	entries, _ := a.List(bg, "docs")
+	items, err := a.DragItems(bg, entries)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, it := range items {
+		got = append(got, it.Name)
+	}
+	// Folders before files, and every folder before its contents.
+	want := []string{`proj`, `proj\sub`, `proj\sub\b.txt`, `proj\a.txt`, `top.txt`}
+	if len(got) != len(want) {
+		t.Fatalf("got %v", got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("got %v, want %v", got, want)
+		}
+	}
+	b := items[2]
+	if b.Remote != "docs/proj/sub/b.txt" || b.Size != 2 || !items[1].IsDir {
+		t.Fatalf("item %+v", b)
+	}
+
+	dst := filepath.Join(t.TempDir(), "x", "b.txt")
+	if err := a.DownloadFile(bg, b.Remote, dst); err != nil {
+		t.Fatal(err)
+	}
+	if e, ok := a.Log().Latest("docs/proj/sub/b.txt"); !ok || e.Size != 2 {
+		t.Fatal("drag download must be recorded in the transfer list")
+	}
+}

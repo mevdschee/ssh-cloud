@@ -11,8 +11,10 @@ import (
 	"log/slog"
 	"os"
 	"path"
+	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 	"unsafe"
 
 	"github.com/mevdschee/ssh-cloud/internal/app"
@@ -138,11 +140,13 @@ func (me *Explorer) events() {
 	me.wnd.On().WmCreate(func(_ ui.WmCreate) int {
 		me.list.Col(3).SetJustification(co.HDF_RIGHT)
 		me.updateButtons()
+		cleanDragTemp()
 		me.wnd.UiThread(me.startup) // after the window is shown
 		return 0
 	})
 	me.wnd.On().WmDestroy(func() {
 		me.cancel()
+		cleanDragTemp()
 		me.mu.Lock()
 		if me.app != nil {
 			me.app.Close()
@@ -787,6 +791,17 @@ func (me *Explorer) dragEvents() {
 		if me.dragging == nil {
 			return
 		}
+		// Leaving the list turns the drag into a drag out to Windows
+		// Explorer (or any other drop target).
+		pt := p.Pos()
+		me.list.Hwnd().ClientToScreenPt(&pt)
+		if rc, err := me.list.Hwnd().GetWindowRect(); err == nil &&
+			(pt.X < rc.Left || pt.X >= rc.Right || pt.Y < rc.Top || pt.Y >= rc.Bottom) {
+			entries := me.dragging
+			me.endDrag()
+			me.dragOut(entries)
+			return
+		}
 		idx := -1
 		if _, ok := me.dropTarget(p.Pos()); ok {
 			item, _ := me.list.HitTest(p.Pos())
@@ -874,4 +889,52 @@ func (me *Explorer) moveInto(entries []remote.Entry, target remote.Entry) {
 		}
 		me.refresh()
 	})
+}
+
+// dragOut drags cloud items out to Windows Explorer. The file list is built
+// from metadata first; each file is downloaded only when the drop target asks
+// for its content. This blocks the UI thread for the duration of the drag and
+// the downloads (the OLE drag loop runs on it).
+func (me *Explorer) dragOut(entries []remote.Entry) {
+	me.mu.Lock()
+	a := me.app
+	me.mu.Unlock()
+	if a == nil || me.busy {
+		return
+	}
+	me.busy = true
+	me.updateButtons()
+	defer func() {
+		me.busy = false
+		me.updateButtons()
+	}()
+
+	slog.Info("drag out started", "items", len(entries))
+	items, err := a.DragItems(me.ctx, entries)
+	if err != nil {
+		ui.MsgError(me.wnd, "Drag", "Could not list the dragged items", err.Error())
+		return
+	}
+	root := filepath.Join(dragTempRoot(), fmt.Sprintf("%d", time.Now().UnixNano()))
+	downloaded := 0
+	fetch := func(i int) (string, error) {
+		it := items[i]
+		local := filepath.Join(root, fmt.Sprintf("%d", i), path.Base(it.Remote))
+		setPartText(me.status.Part(0), "Downloading "+path.Base(it.Remote)+"...")
+		if err := a.DownloadFile(me.ctx, it.Remote, local); err != nil {
+			return "", err
+		}
+		downloaded++
+		return local, nil
+	}
+	dropped, err := doDragDrop(items, fetch)
+	switch {
+	case err != nil:
+		me.setStatus("Drag failed")
+		ui.MsgError(me.wnd, "Drag", "Could not drag the items out", err.Error())
+	case dropped:
+		me.setStatus(fmt.Sprintf("Dragged out: %d files downloaded", downloaded))
+	default:
+		me.setStatus("Drag cancelled")
+	}
 }
