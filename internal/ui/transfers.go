@@ -28,7 +28,6 @@ func showTransfers(parent ui.Parent, title string, entries []transferlog.Entry) 
 		Column("Local path", ui.DpiX(220)).
 		Column("Size", ui.DpiX(80)).
 		Column("Result", ui.DpiX(110)))
-	drawSelection(list)
 	closeBtn := ui.NewButton(wnd, ui.OptsButton().Text("Close").Position(ui.Dpi(800, 422)).
 		CtrlId(uint16(co.ID_CANCEL)).Layout(ui.LAY_MOVE_MOVE))
 	closeBtn.On().BnClicked(func() { closeModal(wnd) })

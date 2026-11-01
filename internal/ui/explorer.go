@@ -199,7 +199,6 @@ func (me *Explorer) events() {
 	})
 	me.dragEvents()
 
-	drawSelection(me.list)
 	me.list.On().LvnItemActivate(func(_ *win.NMITEMACTIVATE) { me.open() })
 	me.list.On().LvnItemChanged(func(_ *win.NMLISTVIEW) { me.updateButtons() })
 	me.list.On().LvnKeyDown(func(p *win.NMLVKEYDOWN) {

@@ -43,8 +43,6 @@ type palette struct {
 	tabSeparator  uint32
 	dialog        uint32 // dialog background
 	field         uint32 // edit and combo box background in dialogs
-	selection     uint32 // selected line in a list (dark mode only)
-	selBorder     uint32 // frame around the focused selected line (dark mode only)
 	icon          color.RGBA
 	iconDisabled  color.RGBA
 }
@@ -84,8 +82,6 @@ var (
 		tabSeparator:  0x003A3A3A,
 		dialog:        0x00202020,
 		field:         0x002D2D2D,
-		selection:     0x00505050,
-		selBorder:     0x00C3C3C3,
 		icon:          color.RGBA{0xe0, 0xe0, 0xe0, 0xff},
 		iconDisabled:  color.RGBA{0x5c, 0x5c, 0x5c, 0xff},
 	}
@@ -311,58 +307,6 @@ func themeTreeView(h win.HWND) {
 	}
 	h.SendMessage(co.TVM_SETBKCOLOR, 0, win.LPARAM(bg))
 	h.SendMessage(co.TVM_SETTEXTCOLOR, 0, win.LPARAM(fg))
-}
-
-// drawSelection draws the selected lines of a list in dark mode like
-// Explorer: a grey fill, and a light frame around the focused line while the
-// list has the focus. The dark list theme would select in grey with a blue
-// frame. The control then draws the line as not selected, on top of the
-// fill. Register it on every list view (it does nothing in light mode).
-func drawSelection(list *ui.ListView) {
-	list.On().NmCustomDraw(func(p *win.NMLVCUSTOMDRAW) co.CDRF {
-		if !darkMode {
-			return co.CDRF_DODEFAULT
-		}
-		h := list.Hwnd()
-		idx := p.Nmcd.DwItemSpec
-		state := func() co.LVIS {
-			s, _ := h.SendMessage(co.LVM_GETITEMSTATE, win.WPARAM(idx), win.LPARAM(co.LVIS_SELECTED|co.LVIS_FOCUSED))
-			return co.LVIS(s)
-		}
-		bounds := func() win.RECT {
-			rc := win.RECT{Left: int32(co.LVIR_BOUNDS)}
-			h.SendMessage(co.LVM_GETITEMRECT, win.WPARAM(idx), win.LPARAM(unsafe.Pointer(&rc)))
-			return rc
-		}
-		hdc := uintptr(p.Nmcd.Hdc)
-		switch p.Nmcd.DwDrawStage {
-		case co.CDDS_PREPAINT:
-			return co.CDRF_NOTIFYITEMDRAW
-		case co.CDDS_ITEMPREPAINT:
-			p.Nmcd.UItemState &^= co.CDIS_FOCUS // no dotted focus rectangle
-			if state()&co.LVIS_SELECTED == 0 {
-				return co.CDRF_DODEFAULT
-			}
-			p.Nmcd.UItemState &^= co.CDIS_SELECTED | co.CDIS_HOT
-			fillRect(hdc, bounds(), colors.selection)
-			p.ClrText = win.COLORREF(colors.text)
-			p.ClrTextBk = win.COLORREF(colors.selection)
-			return co.CDRF_NOTIFYPOSTPAINT
-		case co.CDDS_ITEMPOSTPAINT:
-			if st := state(); st&co.LVIS_SELECTED != 0 && st&co.LVIS_FOCUSED != 0 && win.GetFocus() == h {
-				rc := bounds()
-				for _, r := range []win.RECT{
-					{Left: rc.Left, Top: rc.Top, Right: rc.Right, Bottom: rc.Top + 1},
-					{Left: rc.Left, Top: rc.Bottom - 1, Right: rc.Right, Bottom: rc.Bottom},
-					{Left: rc.Left, Top: rc.Top, Right: rc.Left + 1, Bottom: rc.Bottom},
-					{Left: rc.Right - 1, Top: rc.Top, Right: rc.Right, Bottom: rc.Bottom},
-				} {
-					fillRect(hdc, r, colors.selBorder)
-				}
-			}
-		}
-		return co.CDRF_DODEFAULT
-	})
 }
 
 // The list view subclass colours the header text (the dark header theme
