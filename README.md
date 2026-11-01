@@ -5,6 +5,8 @@ The ultimate simple cloud storage client. As simple as it gets.
 Your cloud is any server you can SSH into. No sync engine, no daemon, no
 database, no vendor. Just a Windows window on a folder on your server.
 
+![SSH-Cloud](screenshot.png)
+
 - **Browse** the server like Windows Explorer: rename, move, copy and delete
   happen directly on the server.
 - **Work on a file:** drag it out, edit it, drag it back.
