@@ -76,7 +76,7 @@ var (
 		addressFill:   0x00383838,
 		accent:        0x00FFCD60, // #60CDFF
 		text:          0x00FFFFFF,
-		textDisabled:  0x00787878,
+		textDisabled:  0x005C5C5C,
 		tabHover:      0x002D2D2D,
 		tabCloseHover: 0x003D3D3D,
 		tabSeparator:  0x003A3A3A,

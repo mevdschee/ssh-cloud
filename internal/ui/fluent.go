@@ -64,8 +64,10 @@ func iconSize(hwnd win.HWND) int {
 	return size
 }
 
-// bitmapFromImage makes a 32-bit top-down DIB section with premultiplied
-// alpha (what image lists with ILC_COLOR32 expect) from an image.RGBA.
+// bitmapFromImage makes a 32-bit top-down DIB section from an image.RGBA
+// for an image list. Image lists treat such bitmaps like icons, with
+// straight alpha, so the premultiplied colours of image.RGBA are divided by
+// alpha first (otherwise the antialiased edges of light icons turn dark).
 func bitmapFromImage(img *image.RGBA) (win.HBITMAP, error) {
 	w, h := img.Rect.Dx(), img.Rect.Dy()
 	type bitmapInfoHeader struct {
@@ -84,11 +86,18 @@ func bitmapFromImage(img *image.RGBA) (win.HBITMAP, error) {
 		return 0, err
 	}
 	dst := unsafe.Slice((*byte)(bits), w*h*4)
-	for i := 0; i < w*h; i++ { // RGBA (premultiplied) to BGRA
-		dst[i*4+0] = img.Pix[i*4+2]
-		dst[i*4+1] = img.Pix[i*4+1]
-		dst[i*4+2] = img.Pix[i*4+0]
-		dst[i*4+3] = img.Pix[i*4+3]
+	for i := 0; i < w*h; i++ { // RGBA (premultiplied) to BGRA (straight)
+		a := uint32(img.Pix[i*4+3])
+		straight := func(c uint8) uint8 {
+			if a == 0 {
+				return 0
+			}
+			return uint8(min(255, (uint32(c)*255+a/2)/a))
+		}
+		dst[i*4+0] = straight(img.Pix[i*4+2])
+		dst[i*4+1] = straight(img.Pix[i*4+1])
+		dst[i*4+2] = straight(img.Pix[i*4+0])
+		dst[i*4+3] = uint8(a)
 	}
 	return win.HBITMAP(hbmp), nil
 }
@@ -192,11 +201,8 @@ func newToolbar(parent ui.Parent, bg func() uint32) *ui.Toolbar {
 			case st&co.CDIS_HOT != 0:
 				roundRect(hdc, p.Nmcd.Rc, int32(ui.DpiX(4)), shade(bg(), 18))
 			}
-			p.ClrText = win.COLORREF(colors.text)
-			if st&co.CDIS_DISABLED != 0 {
-				p.ClrText = win.COLORREF(colors.textDisabled)
-			}
-			return co.CDRF(tbcdrfNoEdges | tbcdrfNoOffset | tbcdrfNoEtchedEffect | tbcdrfNoBackground | tbcdrfUseCDColors)
+			drawButton(tb, hdc, p.Nmcd)
+			return co.CDRF_SKIPDEFAULT
 		case co.CDDS_POSTPAINT:
 			if darkMode {
 				paintSeparators(tb, hdc, bg())
@@ -207,14 +213,49 @@ func newToolbar(parent ui.Parent, bg func() uint32) *ui.Toolbar {
 	return tb
 }
 
-// Toolbar custom draw results missing from windigo's co package.
-const (
-	tbcdrfNoEdges        = 0x00010000
-	tbcdrfNoOffset       = 0x00040000
-	tbcdrfNoEtchedEffect = 0x00100000
-	tbcdrfNoBackground   = 0x00400000
-	tbcdrfUseCDColors    = 0x00800000
-)
+// buttonLook is what drawButton needs to know about a toolbar button.
+type buttonLook struct {
+	image    int32
+	text     string
+	showText bool
+}
+
+// toolbarButtons holds the look of each toolbar's buttons, by command id.
+var toolbarButtons = map[win.HWND]map[uint16]buttonLook{}
+
+// drawButton paints a button's icon and label, centred in its rectangle,
+// in the colours of the current palette (the themed toolbar would draw
+// disabled labels in the grey of the light theme).
+func drawButton(tb *ui.Toolbar, hdc uintptr, cd win.NMCUSTOMDRAW) {
+	h := tb.Hwnd()
+	b, ok := toolbarButtons[h][uint16(cd.DwItemSpec)]
+	if !ok {
+		return
+	}
+	disabled := cd.UItemState&co.CDIS_DISABLED != 0
+	msg, fg := co.TB_GETIMAGELIST, colors.text
+	if disabled {
+		msg, fg = co.TB_GETDISABLEDIMAGELIST, colors.textDisabled
+	}
+	imgList, _ := h.SendMessage(msg, 0, 0)
+	size := int32(toolbarIconSize[h])
+	rc := cd.Rc
+	gap, textW := int32(0), int32(0)
+	font, _ := h.SendMessage(co.WM_GETFONT, 0, 0)
+	old, _, _ := procSelectObject.Call(hdc, font)
+	defer procSelectObject.Call(hdc, old)
+	if b.showText {
+		gap, textW = int32(ui.DpiX(6)), textWidth(hdc, b.text)
+	}
+	x := rc.Left + (rc.Right-rc.Left-size-gap-textW)/2
+	y := rc.Top + (rc.Bottom-rc.Top-size)/2
+	procImageListDraw.Call(imgList, uintptr(b.image), hdc, uintptr(x), uintptr(y), 1) // ILD_TRANSPARENT
+	if b.showText {
+		procSetBkMode.Call(hdc, 1) // TRANSPARENT
+		procSetTextColor.Call(hdc, uintptr(fg))
+		drawTextV(hdc, b.text, win.RECT{Left: x + size + gap, Top: rc.Top, Right: rc.Right, Bottom: rc.Bottom})
+	}
+}
 
 // paintSeparators paints the toolbar's separators as a thin line in the
 // divider colour over what the light toolbar theme drew.
@@ -319,6 +360,10 @@ func addButtons(tb *ui.Toolbar, buttons []tbButton) {
 			toolbarStrings = append(toolbarStrings, text)
 			tbb.IBitmap = index[b.icon]
 			tbb.IdCommand = int32(b.id)
+			if toolbarButtons[h] == nil {
+				toolbarButtons[h] = map[uint16]buttonLook{}
+			}
+			toolbarButtons[h][b.id] = buttonLook{image: tbb.IBitmap, text: b.text, showText: b.showText}
 			tbb.FsStyle = co.BTNS_AUTOSIZE
 			if b.width > 0 && !b.showText {
 				tbb.FsStyle = 0 // fixed width, set below
