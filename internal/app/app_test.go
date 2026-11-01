@@ -283,3 +283,30 @@ func TestStatus(t *testing.T) {
 		t.Fatalf("status %v", st)
 	}
 }
+
+func TestDownloadFiles(t *testing.T) {
+	srv := sshtest.Start(t, sshtest.Options{})
+	srv.Write("a.txt", "aaa")
+	srv.Write("d/b.txt", "bb")
+	a := open(t, srv)
+	dir := t.TempDir()
+	jobs := []FileJob{
+		{Remote: "a.txt", Local: filepath.Join(dir, "0", "a.txt"), Size: 3},
+		{Remote: "d/b.txt", Local: filepath.Join(dir, "1", "b.txt"), Size: 2},
+	}
+	var last ProgressInfo
+	if err := a.DownloadFiles(bg, jobs, func(p ProgressInfo) { last = p }); err != nil {
+		t.Fatal(err)
+	}
+	if data, _ := os.ReadFile(jobs[1].Local); string(data) != "bb" {
+		t.Fatal("file not downloaded")
+	}
+	if last.Bytes != 5 || last.TotalBytes != 5 || last.FileCount != 2 {
+		t.Fatalf("progress %+v", last)
+	}
+	ctx, cancel := context.WithCancel(bg)
+	cancel()
+	if err := a.DownloadFiles(ctx, jobs, nil); err == nil {
+		t.Fatal("cancelled context must stop the downloads")
+	}
+}

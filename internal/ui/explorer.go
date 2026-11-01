@@ -645,13 +645,14 @@ func (me *Explorer) contextMenu() {
 	}
 	sel := me.selected()
 	n := len(sel)
-	openText := "&Open"
-	if n == 1 && !sel[0].IsDir {
-		openText = "&Download to..."
+	// A folder opens on double-click, a file downloads; the default (bold)
+	// item matches that, and "Download to..." appears only once.
+	var items []menuItem
+	if n == 1 && sel[0].IsDir {
+		items = append(items, menuItem{id: cmdOpen, text: "&Open", enabled: true, bold: true})
 	}
-	items := []menuItem{
-		{id: cmdOpen, text: openText, enabled: n == 1, bold: true},
-		{id: cmdDownload, text: "Download &to...", enabled: n > 0},
+	items = append(items, menuItem{id: cmdDownload, text: "Download &to...", enabled: n > 0, bold: n > 0 && !(n == 1 && sel[0].IsDir)})
+	items = append(items, []menuItem{
 		{},
 		{id: cmdCut, text: "Cu&t\tCtrl+X", enabled: n > 0},
 		{id: cmdCopy, text: copyMenuText(me.canCopy), enabled: n > 0 && me.canCopy},
@@ -664,7 +665,7 @@ func (me *Explorer) contextMenu() {
 		{id: cmdNewFolder, text: "&New folder\tCtrl+Shift+N", enabled: true},
 		{id: cmdUpload, text: "&Upload...", enabled: true},
 		{id: cmdRefresh, text: "Re&fresh\tF5", enabled: true},
-	}
+	}...)
 	switch popupMenu(me.wnd.Hwnd(), items) {
 	case cmdOpen:
 		me.open()
@@ -1003,8 +1004,7 @@ func (me *Explorer) moveInto(entries []remote.Entry, target remote.Entry) {
 
 // dragOut drags cloud items out to Windows Explorer. The file list is built
 // from metadata first; each file is downloaded only when the drop target asks
-// for its content. This blocks the UI thread for the duration of the drag and
-// the downloads (the OLE drag loop runs on it).
+// for its content; the downloads then run in a progress window with Cancel.
 func (me *Explorer) dragOut(entries []remote.Entry) {
 	me.mu.Lock()
 	a := me.app
@@ -1026,16 +1026,34 @@ func (me *Explorer) dragOut(entries []remote.Entry) {
 		return
 	}
 	root := filepath.Join(dragTempRoot(), fmt.Sprintf("%d", time.Now().UnixNano()))
-	downloaded := 0
-	fetch := func(i int) (string, error) {
-		it := items[i]
-		local := filepath.Join(root, fmt.Sprintf("%d", i), path.Base(it.Remote))
-		setPartText(me.status.Part(0), "Downloading "+path.Base(it.Remote)+"...")
-		if err := a.DownloadFile(me.ctx, it.Remote, local); err != nil {
-			return "", err
+	locals := make([]string, len(items))
+	var jobs []app.FileJob
+	for i, it := range items {
+		if !it.IsDir {
+			locals[i] = filepath.Join(root, fmt.Sprintf("%d", i), path.Base(it.Remote))
+			jobs = append(jobs, app.FileJob{Remote: it.Remote, Local: locals[i], Size: it.Size})
 		}
-		downloaded++
-		return local, nil
+	}
+	// Explorer asks for each file's content after the drop. The first request
+	// downloads all files of the drag in one progress window (which keeps the
+	// app responsive while the COM call waits); later requests are answered
+	// from the downloaded files.
+	fetched, downloaded := false, 0
+	var fetchErr error
+	fetch := func(i int) (string, error) {
+		if !fetched {
+			fetched = true
+			fetchErr = me.progressDialog("Downloading", func(ctx context.Context, progress app.Progress) error {
+				return a.DownloadFiles(ctx, jobs, progress)
+			})
+			if fetchErr == nil {
+				downloaded = len(jobs)
+			}
+		}
+		if fetchErr != nil {
+			return "", fetchErr
+		}
+		return locals[i], nil
 	}
 	dropped, err := doDragDrop(items, fetch)
 	switch {

@@ -77,7 +77,8 @@ func isWithin(p, dir string) bool {
 // TempName returns a fresh hidden temp file name for an upload of name.
 func TempName(name string) string { return "." + name + tmpMarker + randomID() }
 
-// ClaimName returns a fresh hidden claim file name for name.
+// ClaimName returns a fresh hidden claim file name for name. Claim names are
+// unique so a client's cleanup can never remove another client's claim.
 func ClaimName(name string) string { return "." + name + claimMarker + randomID() }
 
 // ClaimOf reports whether file is a claim file and returns the name of the

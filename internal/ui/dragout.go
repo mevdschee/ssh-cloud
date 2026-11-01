@@ -15,6 +15,7 @@ package ui
 // IDropSource is the small companion object DoDragDrop needs.
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -47,6 +48,7 @@ const (
 	eNotImpl                   = 0x80004001
 	eNoInterface               = 0x80004002
 	ePointer                   = 0x80004003
+	eAbort                     = 0x80004004
 	eFail                      = 0x80004005
 	dvEFormatEtc               = 0x80040064
 	dvELindex                  = 0x80040068
@@ -247,6 +249,10 @@ func doGetData(this *dataObject, f *formatEtc, m *stgMedium) (hr uintptr) {
 
 	i := int(f.lindex)
 	local, err := this.fetch(i)
+	if errors.Is(err, context.Canceled) {
+		slog.Info("drag download cancelled", "remote", this.items[i].Remote)
+		return eAbort
+	}
 	if err != nil {
 		slog.Error("drag download failed", "remote", this.items[i].Remote, "err", err)
 		return eFail

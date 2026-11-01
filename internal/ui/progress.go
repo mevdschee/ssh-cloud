@@ -14,12 +14,12 @@ import (
 	"github.com/mevdschee/ssh-cloud/internal/logging"
 	"github.com/rodrigocfd/windigo/co"
 	"github.com/rodrigocfd/windigo/ui"
+	"github.com/rodrigocfd/windigo/win"
 )
 
-// runWithProgress runs a long operation (upload, download, copy, delete) on
-// a goroutine and shows a progress window with a Cancel button until it
-// finishes. Closing the window also cancels. done runs on the UI thread when
-// the work has really finished.
+// runWithProgress runs a long operation (upload, download, copy, delete)
+// with a progress window. done runs on the UI thread when the work has really
+// finished.
 func (me *Explorer) runWithProgress(title string, work func(ctx context.Context, a *app.App, progress app.Progress) error, done func(err error)) {
 	me.mu.Lock()
 	a := me.app
@@ -27,10 +27,30 @@ func (me *Explorer) runWithProgress(title string, work func(ctx context.Context,
 	if a == nil || me.busy {
 		return
 	}
-	ctx, cancel := context.WithCancel(me.ctx)
-	me.busy, me.opCancel = true, cancel
+	me.busy = true
 	me.setStatus(title + "...")
 	me.updateButtons()
+	err := me.progressDialog(title, func(ctx context.Context, progress app.Progress) error {
+		return work(ctx, a, progress)
+	})
+	me.busy = false
+	if done != nil {
+		done(err)
+	}
+	me.updateButtons()
+}
+
+// progressDialog runs work on a goroutine and shows a progress window with a
+// Cancel button until it finishes; closing the window also cancels. It
+// blocks (running the window's message loop, so the app stays responsive)
+// and returns work's error. It can be used where a result is needed before
+// returning, such as inside a drag and drop callback.
+func (me *Explorer) progressDialog(title string, work func(ctx context.Context, progress app.Progress) error) error {
+	ctx, cancel := context.WithCancel(me.ctx)
+	defer cancel()
+	prevCancel := me.opCancel
+	me.opCancel = cancel
+	defer func() { me.opCancel = prevCancel }()
 	slog.Debug("operation start", "op", title)
 
 	wnd := ui.NewModal(me.wnd, ui.OptsModal().Title(title).Size(ui.Dpi(460, 158)))
@@ -104,36 +124,54 @@ func (me *Explorer) runWithProgress(title string, work func(ctx context.Context,
 	wnd.On().WmDestroy(func() {
 		closed = true
 		me.progressWnd = nil
-		cancel() // closing the window cancels; done still waits for the work
+		cancel() // closing the window cancels
 	})
+
+	finished := make(chan error, 1)
 	wnd.On().WmCreate(func(_ ui.WmCreate) int {
 		bar.SetRange(0, 1000)
 		go func() {
 			err := errors.New("internal error, see the log")
 			func() {
 				defer logging.Recover(title)
-				err = work(ctx, a, progress)
+				err = work(ctx, progress)
 			}()
 			if err != nil {
 				slog.Error("operation failed", "op", title, "err", err)
 			}
+			finished <- err
 			me.wnd.UiThread(func() {
 				if !closed {
 					closeModal(wnd)
 				}
-				me.progressWnd = nil
-				me.busy, me.opCancel = false, nil
-				cancel()
-				if done != nil {
-					done(err)
-				}
-				me.updateButtons()
 			})
 		}()
 		return 0
 	})
+	prevWnd := me.progressWnd
 	me.progressWnd = wnd
 	wnd.ShowModal()
+	me.progressWnd = prevWnd
+	// Normally the work is done when the window closes. If the user closed
+	// it, the work was cancelled and ends shortly; keep dispatching messages
+	// meanwhile, so a worker waiting on the UI thread cannot deadlock. The
+	// worker posts a message after finishing, which ends the wait.
+	for {
+		select {
+		case err := <-finished:
+			return err
+		default:
+		}
+		var msg win.MSG
+		if r, err := win.GetMessage(&msg, 0, 0, 0); err != nil || r == 0 {
+			if r == 0 { // WM_QUIT: hand it back to the main loop
+				win.PostQuitMessage(int(msg.WParam))
+			}
+			return <-finished
+		}
+		win.TranslateMessage(&msg)
+		win.DispatchMessage(&msg)
+	}
 }
 
 // dialogParent is the window prompts from a worker should be modal to: the

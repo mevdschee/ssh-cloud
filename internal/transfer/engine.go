@@ -51,6 +51,7 @@ const (
 	UnknownVersion   Reason = "version unknown (no hash file)"
 	ChangedOutside   Reason = "changed outside SSH-Cloud"
 	CreatedMeanwhile Reason = "created by someone else during your upload"
+	MissingMeanwhile Reason = "deleted, moved or being replaced by someone else during your upload"
 )
 
 // ErrConflict matches every *ConflictError with errors.Is.
@@ -171,11 +172,13 @@ func (e *Engine) Upload(ctx context.Context, localPath, remotePath string, mode 
 }
 
 func (e *Engine) upload(ctx context.Context, localPath, p string, mode Mode, local hashInfo) (Result, error) {
+	existed := false // the target existed when the upload started
 	if mode == Check {
-		unchanged, err := e.precheck(ctx, p, local)
+		unchanged, exists, err := e.precheck(ctx, p, local)
 		if err != nil {
 			return Result{}, err
 		}
+		existed = exists
 		if unchanged {
 			e.dropPending(p)
 			return Result{Path: p, Size: local.Size, Hash: local.Hash, Outcome: transferlog.Unchanged}, nil
@@ -189,7 +192,7 @@ func (e *Engine) upload(ctx context.Context, localPath, p string, mode Mode, loc
 	if e.beforeCommit != nil {
 		e.beforeCommit()
 	}
-	res, err := e.commit(ctx, p, tmp, mode, local)
+	res, err := e.commit(ctx, p, tmp, mode, local, existed)
 	if errors.Is(err, ErrConflict) {
 		return res, err // keep the temp for the user's decision
 	}
@@ -247,30 +250,30 @@ func (e *Engine) compare(p string, size int64) (Reason, *transferlog.Entry, erro
 
 // precheck is the cheap check before any content is sent. It only reads
 // metadata and the hash file.
-func (e *Engine) precheck(ctx context.Context, p string, local hashInfo) (unchanged bool, err error) {
+func (e *Engine) precheck(ctx context.Context, p string, local hashInfo) (unchanged, exists bool, err error) {
 	fi, err := e.waitStat(ctx, p)
 	if errors.Is(err, fs.ErrNotExist) {
-		return false, nil // new file
+		return false, false, nil // new file
 	}
 	if err != nil {
-		return false, err
+		return false, false, err
 	}
 	if fi.IsDir() {
-		return false, fmt.Errorf("upload to %q: is a folder: %w", p, remote.ErrExists)
+		return false, true, fmt.Errorf("upload to %q: is a folder: %w", p, remote.ErrExists)
 	}
 	if h, ok, err := e.readHash(p); err != nil {
-		return false, err
+		return false, true, err
 	} else if ok && h.Hash == local.Hash && h.Size == fi.Size() {
-		return true, nil
+		return true, true, nil
 	}
 	reason, last, err := e.compare(p, fi.Size())
 	if err != nil {
-		return false, err
+		return false, true, err
 	}
 	if reason != "" {
-		return false, &ConflictError{Path: p, Reason: reason, ServerSize: fi.Size(), Last: last}
+		return false, true, &ConflictError{Path: p, Reason: reason, ServerSize: fi.Size(), Last: last}
 	}
-	return false, nil
+	return false, true, nil
 }
 
 // stage uploads the local file to a hidden temp file next to the target, or
@@ -308,7 +311,12 @@ func (e *Engine) stage(ctx context.Context, localPath, p string, local hashInfo)
 }
 
 // commit puts the staged temp file in place according to mode.
-func (e *Engine) commit(ctx context.Context, p, tmp string, mode Mode, local hashInfo) (Result, error) {
+// existed says the target existed when a Check upload started. Such an upload
+// never takes the new-file path: a missing target then means it was deleted,
+// moved, or is claimed by another client right now (a folder listing cannot
+// reliably show the claim), so creating it anew could silently replace the
+// version inside that claim.
+func (e *Engine) commit(ctx context.Context, p, tmp string, mode Mode, local hashInfo, existed bool) (Result, error) {
 	done := func(path string, outcome transferlog.Result) (Result, error) {
 		e.forgetPending(p)
 		if err := e.writeHash(path, local); err != nil {
@@ -330,6 +338,9 @@ func (e *Engine) commit(ctx context.Context, p, tmp string, mode Mode, local has
 			return Result{}, err
 		}
 		if _, err := e.waitStat(ctx, p); errors.Is(err, fs.ErrNotExist) {
+			if mode == Check && existed {
+				return Result{}, &ConflictError{Path: p, Reason: MissingMeanwhile}
+			}
 			// New file: a rename that never overwrites.
 			err := e.renameNoReplace(tmp, p)
 			if err == nil {
@@ -344,6 +355,11 @@ func (e *Engine) commit(ctx context.Context, p, tmp string, mode Mode, local has
 			continue // Replace: claim the file that appeared
 		} else if err != nil {
 			return Result{}, err
+		}
+		if mode == Check && !existed {
+			// Started as a new file, but someone created it meanwhile. There is
+			// no version of ours to compare with, so do not claim it: ask.
+			return Result{}, &ConflictError{Path: p, Reason: CreatedMeanwhile}
 		}
 
 		claim := remote.Join(remote.Dir(p), remote.ClaimName(remote.Base(p)))
@@ -499,7 +515,9 @@ func (e *Engine) waitStat(ctx context.Context, p string) (os.FileInfo, error) {
 	}
 }
 
-// claimsOf lists the claim files of p.
+// claimsOf lists the claim files of p. A listing is not an atomic snapshot
+// and can miss a claim made during it; callers must stay safe when that
+// happens (see commit).
 func (e *Engine) claimsOf(p string) ([]string, error) {
 	infos, err := e.c.RawReadDir(remote.Dir(p))
 	if errors.Is(err, fs.ErrNotExist) {

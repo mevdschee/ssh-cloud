@@ -60,9 +60,20 @@ then prompt, which is the safe side.)
      (option: apply to all).
 5. Record the uploaded hash in the transfer list.
 
+Two rules keep step 3 and step 4 apart (a folder listing is not an atomic
+snapshot, so a client can miss another client's claim and see the file as
+missing while it is only claimed):
+
+- An upload that started on an **existing** file never takes the new-file path.
+  If the file is missing at commit time it was deleted, moved, or is claimed
+  right now: prompt ("deleted, moved or being replaced during your upload").
+- An upload that started as a **new** file never claims. If the file exists at
+  commit time, someone created it meanwhile: prompt.
+
 Why simultaneous uploads always prompt: only one client wins the claim, and the
 loser then finds a hash file with the winner's hash, which is not in its transfer
-list. A new-file race is caught by the non-overwriting rename in step 3.
+list. A new-file race is caught by the non-overwriting rename in step 3. Both
+races are stress-tested with eight clients at once.
 
 Why a crash is safe: the hash file is deleted before the new version goes in and
 written after it. A crash in between leaves no hash file ("unknown"), so the next
@@ -143,7 +154,9 @@ renames temp to `<name> (2).<ext>` (next free number) and writes its hash file.
 - Drag out to Windows Explorer: a hand-written COM `IDataObject` offers
   `FileGroupDescriptorW` (built from listings only) and `FileContents`; each file
   is downloaded through the transfer engine only when the drop target asks for
-  it, so the transfer list records its hash.
+  it, so the transfer list records its hash. The first request downloads all
+  files of the drag in the progress window (Cancel aborts the drop); later
+  requests are answered from those downloads.
 - Context menu: Open, Download to..., Cut, Copy, Paste, Rename, Delete,
   Copy path, New folder, Upload, Refresh.
 - Server-side copy (Copy then Paste): `copy-data` on a small SFTP session of its
@@ -218,9 +231,11 @@ Windows.
   same size made that way goes unnoticed; such tools should delete the hash file
   when they change a file.
 - The transfer list is per client: uploading from another machine always asks.
-- Drag out blocks the window while Explorer fetches the files (the OLE drag
-  loop runs on the UI thread). Async extraction (`IDataObjectAsyncCapability`)
-  would fix this.
+- A file that someone creates as new, at the exact moment another client holds
+  a claim on an existing file with that name (or a download is repairing its
+  hash file), can take the name. The claimed version is then kept as
+  "name (2).ext" and that client is prompted; nothing is lost, but the version
+  moves without its author being told.
 - Pageant checks that the request's file mapping belongs to the current user;
   for an elevated (administrator) process this may fail, as the default owner
   is then the Administrators group.

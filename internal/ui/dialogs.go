@@ -146,6 +146,8 @@ func showConflict(parent ui.Parent, c *transfer.ConflictError, localPath string)
 		detail = "The version on the server is unknown."
 	case transfer.CreatedMeanwhile:
 		detail = "Someone else created this file while you were uploading."
+	case transfer.MissingMeanwhile:
+		detail = "The file disappeared from the server during your upload: it was deleted, moved, or someone else is replacing it right now."
 	default:
 		detail = "Someone changed this file on the server since your last transfer."
 	}

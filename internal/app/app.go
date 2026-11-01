@@ -734,3 +734,35 @@ func (a *App) Status(ctx context.Context, entries []remote.Entry) map[string]Fil
 	}
 	return out
 }
+
+// FileJob is one file to download to an exact local path.
+type FileJob struct {
+	Remote, Local string
+	Size          int64
+}
+
+// DownloadFiles downloads files to exact local paths, reporting progress
+// over all of them (used for drag out, where Explorer chose the names). It
+// stops at the first error.
+func (a *App) DownloadFiles(ctx context.Context, jobs []FileJob, progress Progress) error {
+	var total int64
+	for _, j := range jobs {
+		total += j.Size
+	}
+	t := newTracker(progress, "Downloading", len(jobs), total)
+	for i, j := range jobs {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		fctx := t.file(ctx, i, j.Remote)
+		_, e, err := a.conn(ctx)
+		if err != nil {
+			return err
+		}
+		if _, err := e.Download(fctx, j.Remote, j.Local); err != nil {
+			return err
+		}
+		t.fileDone(j.Size)
+	}
+	return nil
+}

@@ -411,7 +411,7 @@ func TestCrashedClaimIsRecovered(t *testing.T) {
 	a.upload("r.txt", "r.txt", Check)
 	a.download("r.txt", "r.txt")
 	// Simulate a client that crashed while holding the claim.
-	if err := os.Rename(srv.Path("r.txt"), srv.Path(".r.txt.claim-dead")); err != nil {
+	if err := os.Rename(srv.Path("r.txt"), srv.Path(remote.ClaimName("r.txt"))); err != nil {
 		t.Fatal(err)
 	}
 
@@ -419,7 +419,7 @@ func TestCrashedClaimIsRecovered(t *testing.T) {
 	if _, err := a.upload("r.txt", "r.txt", Check); err != nil {
 		t.Fatalf("upload should wait, recover the claim and succeed: %v", err)
 	}
-	if srv.Read("r.txt") != "v2" || srv.Exists(".r.txt.claim-dead") {
+	if srv.Read("r.txt") != "v2" || srv.Exists(remote.ClaimName("r.txt")) {
 		t.Fatal("claim should be recovered and replaced")
 	}
 }
@@ -538,5 +538,27 @@ func TestCopyCarriesHashFile(t *testing.T) {
 	}
 	if srv.Exists(".legacy2.txt.sha256") {
 		t.Fatal("no hash file may be invented for content nobody hashed")
+	}
+}
+
+func TestExistingTargetMissingAtCommitPrompts(t *testing.T) {
+	srv := sshtest.Start(t, sshtest.Options{})
+	a := newMachine(t, srv)
+	a.write("r.txt", "v1")
+	a.upload("r.txt", "r.txt", Check)
+	a.write("r.txt", "v2")
+	// The file disappears after the check (deleted, moved, or claimed by a
+	// client whose claim a folder listing did not show).
+	a.e.beforeCommit = func() { os.Remove(srv.Path("r.txt")) }
+	_, err := a.upload("r.txt", "r.txt", Check)
+	if r := conflictReason(t, err); r != MissingMeanwhile {
+		t.Fatalf("want MissingMeanwhile, got %s", r)
+	}
+	if srv.Exists("r.txt") {
+		t.Fatal("an upload that started on an existing file must not recreate it unasked")
+	}
+	a.e.beforeCommit = nil
+	if res, err := a.upload("r.txt", "r.txt", Replace); err != nil || srv.Read("r.txt") != "v2" {
+		t.Fatalf("replace should recreate it: %+v %v", res, err)
 	}
 }
