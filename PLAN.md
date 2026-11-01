@@ -143,30 +143,35 @@ renames temp to `<name> (2).<ext>` (next free number) and writes its hash file.
 
 - Windows 11 look: Fluent UI System Icons (MIT, embedded SVGs rendered at the
   screen's DPI) on flat native toolbars (their background painted white
-  through TBSTYLE_CUSTOMERASE; Windows draws the buttons), the Explorer theme on the tree and list,
-  Segoe UI Variable (falls back to the system font on Windows 10), a white
-  content area with thin dividers, and a rounded window with a Mica title bar.
+  through TBSTYLE_CUSTOMERASE; Windows draws the buttons), the Explorer theme
+  on the tree and list, Segoe UI Variable (the system font under Wine, which
+  lacks it), a white content area with thin grey dividers, and a rounded
+  window with a Mica title bar. The title is always "SSH-Cloud" and the window
+  shows the app icon.
 - Tabs in a grey band below the title bar, one per open connection, each with
   its own folder, history and listing. Drawn like Explorer's (GDI, double
-  buffered): 200 px wide (up to 280 px for long names), rounded, the active
-  tab white and joined to the row below, a close button on the active and the
-  hovered tab, and a + button. New tab (+, Ctrl+T) opens the connection
-  manager; close with Ctrl+W, a middle-click or the tab's right-click menu;
-  Ctrl+Tab switches. Cut/copy and paste work within one connection.
-- Navigation row: Back, Forward, Up, Refresh and the address bar. One command
-  bar: New folder | Cut, Copy, Paste, Rename, Delete | Upload, Download |
-  "..." (overflow menu: Transfers, Check for updates, then About ...). Long operations
-  are cancelled in their progress window; there is no separate Stop button.
-  Icon-only buttons are 40 px wide with 8 px between them, like Explorer (the
-  spacing is skipped under Wine, which lacks TB_SETMETRICS). The connection
-  manager opens from the + tab.
-  Thin dividers between rows, a plain status line at the bottom, the app icon
-  on the window, and the title is always "SSH-Cloud".
+  buffered): only the connection name, 200 px wide (up to 280 px for long
+  names), rounded, the active tab white and joined to the row below, a close
+  button on the active and the hovered tab, and a + button. New tab (+,
+  Ctrl+T) opens the connection manager; close with Ctrl+W, a middle-click or
+  the tab's right-click menu; Ctrl+Tab switches. Cut/copy and paste work
+  within one connection.
+- Navigation row: Back, Forward, Up, Refresh, and the address bar: a
+  borderless edit in a slightly larger font, centred in a white box with a
+  rounded grey border and an accent underline while it has focus.
+- One command bar: New folder | Cut, Copy, Paste, Rename, Delete | Upload,
+  Download | "..." (overflow menu: Transfers, Check for updates, then
+  About ...). Icon-only buttons are 40 px wide with 8 px between them, like
+  Explorer (the spacing is skipped under Wine, which lacks TB_SETMETRICS).
+  Long operations are cancelled in their progress window; there is no Stop
+  button.
 - Folder tree (loaded as you expand it, kept in step with the list) and a file
-  list with Name, Date modified, Type, Size and Status. The divider between
-  them can be dragged (the width is remembered; double-click resets it). Real shell icons and
-  type names; click a header to sort (folders first). Hash, claim and temp
-  files are hidden.
+  list with Name, Date modified, Type, Size and Status; Name takes the free
+  width. The divider between them can be dragged (the width is remembered;
+  double-click resets it). Real shell icons and type names; click a header to
+  sort (folders first). Hash, claim and temp files are hidden.
+- A plain status line at the bottom, below a thin divider: status on the
+  left, item count on the right.
 - Status column: "Up to date" or "Changed on server" for files this client
   transferred before (only their small hash files are read, in the background).
 - Keyboard: Ctrl+X/C/V, Ctrl+A, Ctrl+Shift+N, F2, Del, F5, Backspace,
@@ -250,9 +255,8 @@ server. `ui` is Windows-only and tested by hand.
 2. Transfers: download, atomic upload, transfer list, collision check.
 3. Explorer window with download/upload buttons and the collision prompt.
 4. Connection manager (saved connections, auto-connect to the last one),
-   drag in (upload) and drag within (move), Transfers window, stop button.
-5. Drag out to Windows Explorer (COM `IDataObject` with delayed rendering);
-   needs testing on real Windows.
+   drag in (upload) and drag within (move), Transfers window.
+5. Drag out to Windows Explorer (COM `IDataObject` with delayed rendering).
 6. Polish: folder tree, shell icons and type names, Status column ("changed
    on server" since your last transfer), sortable columns, cut/copy/paste
    (copy is server side with `copy-data`), keyboard shortcuts, and a progress
@@ -264,11 +268,15 @@ server. `ui` is Windows-only and tested by hand.
    from otp4win. First release: v0.1.0.
 9. Explorer polish after the first Windows test: toolbar backgrounds and
    spacing like Windows 11 Explorer, plain status line, window icon, tabs for
-   multiple connections, and an update check in the "..." menu.
+   multiple connections, and an update check.
+10. Refinements from testing on Windows: one command bar with a "..."
+    overflow menu, the address bar box, a draggable tree divider, the About
+    window, progress for drag out, the upload races fixed under stress
+    testing, and asking before replacing a file from another local file.
 
-Milestones 1 to 9 are done (1 to 8 were released as v0.1.0). Parts that need the Windows UI (drag out, the toolbars and theme,
-tabs, Pageant, the updater) are only verified by testing on
-Windows.
+All milestones are done; the latest release is v0.1.9. Parts that need the
+Windows UI (drag out, toolbars and theme, tabs, Pageant, the updater, the
+About window) are only verified by testing on Windows and Wine.
 
 ## Known weaknesses (accepted)
 
