@@ -15,7 +15,7 @@ database, no vendor. Just a Windows window on a folder on your server.
   overwrites. No locks, no conflicts hidden from you.
 - **Nothing to install on the server:** plain OpenSSH (SFTP) is all it needs.
 - **Feels like home:** a Windows 11 style window with tabs for several
-  connections.
+  connections, light or dark like the rest of Windows.
 
 ## Get started
 

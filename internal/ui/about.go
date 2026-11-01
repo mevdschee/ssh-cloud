@@ -25,8 +25,6 @@ import (
 const (
 	repoURL = "https://github.com/mevdschee/ssh-cloud"
 	author  = "Maurits van der Schee"
-
-	linkColor = 0x00C06700 // Windows 11 accent blue #0067C0 (COLORREF)
 )
 
 var (
@@ -60,7 +58,7 @@ func appIconList(size int) uintptr {
 
 // showAbout shows the About window.
 func showAbout(parent ui.Parent, version string) {
-	wnd := ui.NewModal(parent, ui.OptsModal().Title("About SSH-Cloud").Size(ui.Dpi(460, 232)))
+	wnd := newModal(parent, ui.OptsModal().Title("About SSH-Cloud").Size(ui.Dpi(460, 232)))
 	x, w := 132, 310
 	text := func(t string, y, h int, style co.SS) *ui.Static {
 		return ui.NewStatic(wnd, ui.OptsStatic().Text(t).Position(ui.Dpi(x, y)).Size(ui.Dpi(w, h)).
@@ -88,15 +86,7 @@ func showAbout(parent ui.Parent, version string) {
 		title.Hwnd().SendMessage(co.WM_SETFONT, win.WPARAM(titleFont), 1)
 		return 0
 	})
-	// Labels keep the dialog's own background.
-	dlgBrush, _ := win.GetSysColorBrush(co.COLOR_BTNFACE)
-	btnFace, _, _ := procGetSysColor.Call(uintptr(co.COLOR_BTNFACE))
-	wnd.On().WmCtlColorStatic(func(p ui.WmCtlColor) win.HBRUSH {
-		p.Hdc().SetBkColor(win.COLORREF(btnFace))
-		return dlgBrush
-	})
-
-	// The link is painted by the window itself: blue text, no underline (an
+	// The link is painted by the window itself: accent text, no underline (an
 	// underlined font got an underline wider than the text under Wine).
 	// Clicks and the hand cursor use the text's exact rectangle.
 	var linkRect win.RECT
@@ -116,7 +106,7 @@ func showAbout(parent ui.Parent, version string) {
 		left, top := int32(ui.DpiX(x)), int32(ui.DpiY(158))
 		linkRect = win.RECT{Left: left, Top: top, Right: left + textWidth(hdc, repoURL), Bottom: top + int32(ui.DpiY(20))}
 		procSetBkMode.Call(hdc, 1) // TRANSPARENT
-		procSetTextColor.Call(hdc, linkColor)
+		procSetTextColor.Call(hdc, uintptr(colors.accent))
 		p, _ := syscall.UTF16FromString(repoURL)
 		r := linkRect
 		procDrawTextW.Call(hdc, uintptr(unsafe.Pointer(&p[0])), uintptr(len(p)-1), uintptr(unsafe.Pointer(&r)),

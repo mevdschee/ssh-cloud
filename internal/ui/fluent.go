@@ -38,12 +38,6 @@ var (
 	procDwmSetWindowAttr     = dwmapi.NewProc("DwmSetWindowAttribute")
 )
 
-// Colours of Windows 11 text and disabled text on a light background.
-var (
-	iconColor         = color.RGBA{0x1a, 0x1a, 0x1a, 0xff}
-	iconDisabledColor = color.RGBA{0xa0, 0xa0, 0xa0, 0xff}
-)
-
 // Common control styles missing from windigo's co package.
 const (
 	ccsNoResize         = 0x0004
@@ -135,35 +129,111 @@ type tbButton struct {
 // toolbarStrings keeps button labels alive for the toolbars.
 var toolbarStrings [][]uint16
 
-// toolbarIcons remembers the image list order of each toolbar's icons.
-var toolbarIcons = map[win.HWND][]string{}
+// toolbarIcons remembers the image list order of each toolbar's icons, and
+// toolbarIconSize their size.
+var (
+	toolbarIcons    = map[win.HWND][]string{}
+	toolbarIconSize = map[win.HWND]int{}
+)
 
-// newToolbar creates a flat toolbar that paints its background in bg (a
-// COLORREF) instead of the grey of the themed toolbar, and does not position
-// itself (the window's layout code places it). The background goes through
-// TBSTYLE_CUSTOMERASE (the toolbar asks its owner to erase it) and is also
-// painted at the start of each paint, below the buttons, which Windows still
-// draws with their normal hover, pressed and checked looks.
-func newToolbar(parent ui.Parent, bg uint32) *ui.Toolbar {
+// setToolbarIcons (re)renders a toolbar's icons in the current palette.
+func setToolbarIcons(tb *ui.Toolbar) {
+	h := tb.Hwnd()
+	icons, size := toolbarIcons[h], toolbarIconSize[h]
+	for _, m := range []co.WM{co.TB_SETIMAGELIST, co.TB_SETDISABLEDIMAGELIST} {
+		c := colors.icon
+		if m == co.TB_SETDISABLEDIMAGELIST {
+			c = colors.iconDisabled
+		}
+		if old, _ := h.SendMessage(m, 0, win.LPARAM(fluentImageList(icons, size, c))); old != 0 {
+			win.HIMAGELIST(old).Destroy()
+		}
+	}
+	procInvalidateRect.Call(uintptr(h), 0, 1)
+}
+
+// newToolbar creates a flat toolbar that paints its background in bg() (a
+// COLORREF of the current palette) instead of the grey of the themed
+// toolbar, and does not position itself (the window's layout code places
+// it). The background goes through TBSTYLE_CUSTOMERASE (the toolbar asks its
+// owner to erase it) and is also painted at the start of each paint, below
+// the buttons. In light mode Windows draws the buttons with their normal
+// hover, pressed and checked looks; in dark mode those looks are painted
+// here (the toolbar theme has no dark variant), and so are the separators.
+func newToolbar(parent ui.Parent, bg func() uint32) *ui.Toolbar {
 	tb := ui.NewToolbar(parent, ui.OptsToolbar().
 		CtrlStyle(co.TBSTYLE_FLAT|co.TBSTYLE_LIST|co.TBSTYLE_TOOLTIPS|co.TBSTYLE_CUSTOMERASE).
 		CtrlExStyle(co.TBSTYLE_EX_MIXEDBUTTONS|co.TBSTYLE_EX_DOUBLEBUFFER).
 		WndStyle(co.WS_CHILD|co.WS_VISIBLE|co.WS(ccsNoResize|ccsNoParentAlign|ccsNoDivider)))
 	tb.On().NmCustomDraw(func(p *win.NMTBCUSTOMDRAW) co.CDRF {
+		hdc := uintptr(p.Nmcd.Hdc)
 		switch p.Nmcd.DwDrawStage {
 		case co.CDDS_PREERASE:
 			if rc, err := tb.Hwnd().GetClientRect(); err == nil {
-				fillRect(uintptr(p.Nmcd.Hdc), rc, bg)
+				fillRect(hdc, rc, bg())
 			}
 			return co.CDRF_SKIPDEFAULT
 		case co.CDDS_PREPAINT:
 			if rc, err := tb.Hwnd().GetClientRect(); err == nil {
-				fillRect(uintptr(p.Nmcd.Hdc), rc, bg)
+				fillRect(hdc, rc, bg())
+			}
+			if darkMode {
+				return co.CDRF_NOTIFYITEMDRAW | co.CDRF_NOTIFYPOSTPAINT
+			}
+		case co.CDDS_ITEMPREPAINT:
+			if !darkMode {
+				break
+			}
+			st := p.Nmcd.UItemState
+			switch {
+			case st&co.CDIS_DISABLED != 0:
+			case st&(co.CDIS_SELECTED|co.CDIS_CHECKED) != 0:
+				roundRect(hdc, p.Nmcd.Rc, int32(ui.DpiX(4)), shade(bg(), 10))
+			case st&co.CDIS_HOT != 0:
+				roundRect(hdc, p.Nmcd.Rc, int32(ui.DpiX(4)), shade(bg(), 18))
+			}
+			p.ClrText = win.COLORREF(colors.text)
+			if st&co.CDIS_DISABLED != 0 {
+				p.ClrText = win.COLORREF(colors.textDisabled)
+			}
+			return co.CDRF(tbcdrfNoEdges | tbcdrfNoOffset | tbcdrfNoEtchedEffect | tbcdrfNoBackground | tbcdrfUseCDColors)
+		case co.CDDS_POSTPAINT:
+			if darkMode {
+				paintSeparators(tb, hdc, bg())
 			}
 		}
 		return co.CDRF_DODEFAULT
 	})
 	return tb
+}
+
+// Toolbar custom draw results missing from windigo's co package.
+const (
+	tbcdrfNoEdges        = 0x00010000
+	tbcdrfNoOffset       = 0x00040000
+	tbcdrfNoEtchedEffect = 0x00100000
+	tbcdrfNoBackground   = 0x00400000
+	tbcdrfUseCDColors    = 0x00800000
+)
+
+// paintSeparators paints the toolbar's separators as a thin line in the
+// divider colour over what the light toolbar theme drew.
+func paintSeparators(tb *ui.Toolbar, hdc uintptr, bg uint32) {
+	h := tb.Hwnd()
+	n, _ := h.SendMessage(co.TB_BUTTONCOUNT, 0, 0)
+	for i := 0; i < int(n); i++ {
+		var tbb win.TBBUTTON
+		h.SendMessage(co.TB_GETBUTTON, win.WPARAM(i), win.LPARAM(unsafe.Pointer(&tbb)))
+		if tbb.FsStyle&co.BTNS_SEP == 0 {
+			continue
+		}
+		var rc win.RECT
+		h.SendMessage(co.TB_GETITEMRECT, win.WPARAM(i), win.LPARAM(unsafe.Pointer(&rc)))
+		fillRect(hdc, rc, bg)
+		x := (rc.Left + rc.Right) / 2
+		pad := (rc.Bottom - rc.Top) / 4
+		fillRect(hdc, win.RECT{Left: x, Top: rc.Top + pad, Right: x + 1, Bottom: rc.Bottom - pad}, colors.tabSeparator)
+	}
 }
 
 // fillRect fills a rectangle with a solid COLORREF.
@@ -178,8 +248,8 @@ func fillRect(hdc uintptr, rc win.RECT, color uint32) {
 func setupToolbar(tb *ui.Toolbar, icons []string, size, padX, padY, spacing int) {
 	h := tb.Hwnd()
 	toolbarIcons[h] = icons
-	h.SendMessage(co.TB_SETIMAGELIST, 0, win.LPARAM(fluentImageList(icons, size, iconColor)))
-	h.SendMessage(co.TB_SETDISABLEDIMAGELIST, 0, win.LPARAM(fluentImageList(icons, size, iconDisabledColor)))
+	toolbarIconSize[h] = size
+	setToolbarIcons(tb)
 	h.SendMessage(co.TB_SETPADDING, 0, win.LPARAM(uint32(padX)|uint32(padY)<<16))
 	// Wine does not implement TB_SETMETRICS (it logs an error); there the
 	// buttons simply sit a little closer together.
@@ -293,12 +363,6 @@ func enableButton(tb *ui.Toolbar, id uint16, on bool) {
 		v = 1
 	}
 	tb.Hwnd().SendMessage(co.TB_ENABLEBUTTON, win.WPARAM(id), win.LPARAM(v))
-}
-
-// setExplorerTheme gives a list or tree view the look of Windows Explorer.
-func setExplorerTheme(h win.HWND) {
-	name, _ := syscall.UTF16PtrFromString("Explorer")
-	procSetWindowTheme.Call(uintptr(h), uintptr(unsafe.Pointer(name)), 0)
 }
 
 // setWin11Frame asks for rounded corners and a Mica title bar (Windows 11;

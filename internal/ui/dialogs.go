@@ -47,7 +47,7 @@ func okCancel(wnd *ui.Modal, okText string, x, y int) (*ui.Button, *ui.Button) {
 
 // editProfile shows the form for one connection. It returns false on cancel.
 func editProfile(parent ui.Parent, title string, p config.Profile) (config.Profile, bool) {
-	wnd := ui.NewModal(parent, ui.OptsModal().Title(title).Size(ui.Dpi(460, 268)))
+	wnd := newModal(parent, ui.OptsModal().Title(title).Size(ui.Dpi(460, 268)))
 
 	row := func(i int) int { return 14 + i*32 }
 	label(wnd, "Name", 14, row(0), 110)
@@ -134,7 +134,7 @@ func editProfile(parent ui.Parent, title string, p config.Profile) (config.Profi
 // showConflict asks what to do with an upload that collides with a newer or
 // unknown version on the server.
 func showConflict(parent ui.Parent, c *transfer.ConflictError, localPath string) (app.Choice, bool) {
-	wnd := ui.NewModal(parent, ui.OptsModal().Title("File changed on the server").Size(ui.Dpi(470, 210)))
+	wnd := newModal(parent, ui.OptsModal().Title("File changed on the server").Size(ui.Dpi(470, 210)))
 
 	var detail string
 	switch c.Reason {
@@ -164,8 +164,12 @@ func showConflict(parent ui.Parent, c *transfer.ConflictError, localPath string)
 	}
 	text := fmt.Sprintf("%s\n\n%s\n%s.", c.Path, detail, server)
 	ui.NewStatic(wnd, ui.OptsStatic().Text(text).Position(ui.Dpi(14, 14)).Size(ui.Dpi(442, 100)))
-	applyAll := ui.NewCheckBox(wnd, ui.OptsCheckBox().Text("Do this for all remaining conflicts").
-		Position(ui.Dpi(14, 124)).Size(ui.Dpi(300, 20)))
+	// The label is separate from the check box: a themed check box draws its
+	// text black, also in dark mode. Clicking the label toggles the box.
+	applyAll := ui.NewCheckBox(wnd, ui.OptsCheckBox().Position(ui.Dpi(14, 124)).Size(ui.Dpi(18, 20)))
+	applyLabel := ui.NewStatic(wnd, ui.OptsStatic().Text("Do this for all remaining conflicts").
+		Position(ui.Dpi(33, 126)).Size(ui.Dpi(280, 18)))
+	applyLabel.On().StnClicked(func() { applyAll.SetCheck(!applyAll.IsChecked()) })
 
 	choice, all := app.Cancel, false
 	button := func(text string, x int, ch app.Choice, id uint16, style co.BS) {
@@ -186,7 +190,7 @@ func showConflict(parent ui.Parent, c *transfer.ConflictError, localPath string)
 
 // showInput asks for one line of text. Password hides the input.
 func showInput(parent ui.Parent, title, prompt, value string, password bool) (string, bool) {
-	wnd := ui.NewModal(parent, ui.OptsModal().Title(title).Size(ui.Dpi(400, 120)))
+	wnd := newModal(parent, ui.OptsModal().Title(title).Size(ui.Dpi(400, 120)))
 	label(wnd, prompt, 14, 12, 370)
 	style := co.ES_AUTOHSCROLL
 	if password {

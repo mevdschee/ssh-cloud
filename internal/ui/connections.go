@@ -17,7 +17,7 @@ import (
 // with New, Edit, Delete and Connect. Changes are saved immediately. It
 // returns the connection to open, or false when closed without connecting.
 func showConnections(parent ui.Parent, cfg *config.Config, cfgDir string) (config.Profile, bool) {
-	wnd := ui.NewModal(parent, ui.OptsModal().Title("Connections").Size(ui.Dpi(560, 320)))
+	wnd := newModal(parent, ui.OptsModal().Title("Connections").Size(ui.Dpi(560, 320)))
 	list := ui.NewListView(wnd, ui.OptsListView().
 		Position(ui.Dpi(12, 12)).
 		Size(ui.Dpi(430, 296)).

@@ -14,7 +14,7 @@ const maxShown = 2000
 // showTransfers shows the transfer list of the current connection, newest
 // first.
 func showTransfers(parent ui.Parent, title string, entries []transferlog.Entry) {
-	wnd := ui.NewModal(parent, ui.OptsModal().Title(title).Size(ui.Dpi(900, 460)).
+	wnd := newModal(parent, ui.OptsModal().Title(title).Size(ui.Dpi(900, 460)).
 		Style(co.WS_CAPTION|co.WS_SYSMENU|co.WS_CLIPCHILDREN|co.WS_BORDER|co.WS_VISIBLE|co.WS_SIZEBOX))
 	list := ui.NewListView(wnd, ui.OptsListView().
 		Position(ui.Dpi(12, 12)).

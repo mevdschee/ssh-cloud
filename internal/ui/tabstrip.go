@@ -3,8 +3,8 @@
 package ui
 
 // tabStrip draws Explorer-style tabs in a band below the title bar: rounded
-// tabs with the connection name, the active tab white and
-// joined to the white row below, a close button on the active and the
+// tabs with the connection name, the active tab joined to the navigation
+// row below, a close button on the active and the
 // hovered tab, and a + button. It is a small custom control painted with GDI
 // (double buffered).
 
@@ -38,11 +38,6 @@ const (
 	dtSingleLine  = 0x0020
 	dtNoPrefix    = 0x0800
 	dtEndEllipsis = 0x8000
-
-	textColor          = 0x001A1A1A
-	tabHoverColor      = 0x00EAEAEA
-	tabCloseHoverColor = 0x00DCDCDC
-	tabSeparatorColor  = 0x00D0D0D0
 )
 
 type tabStrip struct {
@@ -72,11 +67,9 @@ type tabStrip struct {
 }
 
 func newTabStrip(parent ui.Parent) *tabStrip {
-	brush, _, _ := procCreateSolidBrush.Call(bandColor)
 	t := &tabStrip{active: -1, hover: -1, hoverClose: -1, enabled: true}
 	t.ctl = ui.NewControl(parent, ui.OptsControl().
 		Position(0, 0).Size(ui.Dpi(800, 40)).
-		ClassBrush(win.HBRUSH(brush)).
 		Style(co.WS_CHILD|co.WS_VISIBLE|co.WS_CLIPSIBLINGS).
 		ExStyle(co.WS_EX_LEFT))
 	on := t.ctl.On()
@@ -103,13 +96,20 @@ func newTabStrip(parent ui.Parent) *tabStrip {
 	return t
 }
 
-// setup prepares fonts and icons; called in WM_CREATE of the window.
+// setup prepares fonts and icons; called in WM_CREATE of the window and
+// again when the theme changes.
 func (t *tabStrip) setup(font uintptr, dpi int) {
 	t.font = font
 	t.iconSize = max(20, 20*dpi/96)
 	t.smallSize = max(16, 16*dpi/96)
-	t.icons = uintptr(fluentImageList([]string{"add"}, t.iconSize, iconColor))
-	t.smallIcons = uintptr(fluentImageList([]string{"dismiss_16"}, t.smallSize, iconColor))
+	for _, old := range []uintptr{t.icons, t.smallIcons} {
+		if old != 0 {
+			win.HIMAGELIST(old).Destroy()
+		}
+	}
+	t.icons = uintptr(fluentImageList([]string{"add"}, t.iconSize, colors.icon))
+	t.smallIcons = uintptr(fluentImageList([]string{"dismiss_16"}, t.smallSize, colors.icon))
+	t.invalidate()
 }
 
 func (t *tabStrip) set(names []string, active int) {
@@ -188,7 +188,7 @@ func (t *tabStrip) paint() {
 		procDeleteDC.Call(mem)
 	}()
 
-	fillRect(mem, rc, bandColor)
+	fillRect(mem, rc, colors.band)
 	t.measure(mem, rc.Bottom)
 	radius := int32(ui.DpiX(7))
 	procSetBkMode.Call(mem, 1)
@@ -201,16 +201,16 @@ func (t *tabStrip) paint() {
 		case active:
 			// Rounded at the top only: extend below the strip, so the bottom
 			// corners are cut off and the tab joins the white row below.
-			roundRect(mem, win.RECT{Left: r.Left, Top: r.Top, Right: r.Right, Bottom: r.Bottom + radius}, radius, windowColor)
+			roundRect(mem, win.RECT{Left: r.Left, Top: r.Top, Right: r.Right, Bottom: r.Bottom + radius}, radius, colors.nav)
 		case hover:
-			roundRect(mem, win.RECT{Left: r.Left, Top: r.Top, Right: r.Right, Bottom: r.Bottom - int32(ui.DpiY(4))}, radius, tabHoverColor)
+			roundRect(mem, win.RECT{Left: r.Left, Top: r.Top, Right: r.Right, Bottom: r.Bottom - int32(ui.DpiY(4))}, radius, colors.tabHover)
 		default:
 			// Thin separator after an inactive tab, unless next to the
 			// active or hovered one.
 			next := i + 1
 			if next < len(t.tabs) && next != t.active && next != t.hover {
 				x := r.Right + int32(ui.DpiX(1))
-				fillRect(mem, win.RECT{Left: x, Top: r.Top + int32(ui.DpiY(8)), Right: x + 1, Bottom: r.Bottom - int32(ui.DpiY(10))}, tabSeparatorColor)
+				fillRect(mem, win.RECT{Left: x, Top: r.Top + int32(ui.DpiY(8)), Right: x + 1, Bottom: r.Bottom - int32(ui.DpiY(10))}, colors.tabSeparator)
 			}
 		}
 		textL := r.Left + int32(ui.DpiX(12))
@@ -218,7 +218,7 @@ func (t *tabStrip) paint() {
 		if active || hover {
 			textR = t.closes[i].Left - int32(ui.DpiX(4))
 		}
-		procSetTextColor.Call(mem, textColor)
+		procSetTextColor.Call(mem, uintptr(colors.text))
 		tr := win.RECT{Left: textL, Top: r.Top, Right: textR, Bottom: r.Bottom}
 		if !active {
 			tr.Bottom -= int32(ui.DpiY(4))
@@ -227,14 +227,14 @@ func (t *tabStrip) paint() {
 		if active || hover {
 			c := t.closes[i]
 			if i == t.hoverClose {
-				roundRect(mem, c, int32(ui.DpiX(4)), tabCloseHoverColor)
+				roundRect(mem, c, int32(ui.DpiX(4)), colors.tabCloseHover)
 			}
 			off := (c.Right - c.Left - int32(t.smallSize)) / 2
 			procImageListDraw.Call(t.smallIcons, 0, mem, uintptr(c.Left+off), uintptr(c.Top+off), 1)
 		}
 	}
 	if t.hoverPlus {
-		roundRect(mem, t.plus, int32(ui.DpiX(4)), tabHoverColor)
+		roundRect(mem, t.plus, int32(ui.DpiX(4)), colors.tabHover)
 	}
 	off := (t.plus.Right - t.plus.Left - int32(t.iconSize)) / 2
 	procImageListDraw.Call(t.icons, 0, mem, uintptr(t.plus.Left+off), uintptr(t.plus.Top+off), 1)

@@ -131,16 +131,15 @@ func (me *Explorer) build() {
 								co.WS_MINIMIZEBOX | co.WS_MAXIMIZEBOX | co.WS_SIZEBOX).
 		ExStyle(co.WS_EX_LEFT | co.WS_EX_ACCEPTFILES). // files dropped from Windows Explorer
 		AccelTable(accelerators()).
-		ClassBrush(win.HBRUSH(co.COLOR_WINDOW + 1)). // white, like Windows 11 Explorer
-		ClassIconId(1).                              // the app icon (winres/winres.json)
+		ClassIconId(1). // the app icon (winres/winres.json); paint() and WM_ERASEBKGND draw the background
 		Center(true))
 
 	me.tabs = newTabStrip(me.wnd)
-	me.navBar = newToolbar(me.wnd, windowColor)
+	me.navBar = newToolbar(me.wnd, func() uint32 { return colors.nav })
 	// The address bar is a borderless edit centred in a box drawn by paint().
 	me.address = ui.NewEdit(me.wnd, ui.OptsEdit().Position(ui.Dpi(160, 9)).Width(ui.DpiX(600)).
 		WndExStyle(co.WS_EX_LEFT))
-	me.cmdBar = newToolbar(me.wnd, windowColor)
+	me.cmdBar = newToolbar(me.wnd, func() uint32 { return colors.window })
 
 	// The tree and list are borderless and positioned by layout().
 	me.tree = ui.NewTreeView(me.wnd, ui.OptsTreeView().

@@ -50,7 +50,7 @@ func (me *Explorer) progressDialog(title string, work func(ctx context.Context, 
 	defer cancel()
 	slog.Debug("operation start", "op", title)
 
-	wnd := ui.NewModal(me.wnd, ui.OptsModal().Title(title).Size(ui.Dpi(460, 158)))
+	wnd := newModal(me.wnd, ui.OptsModal().Title(title).Size(ui.Dpi(460, 158)))
 	action := ui.NewStatic(wnd, ui.OptsStatic().Text("Preparing...").Position(ui.Dpi(14, 14)).Size(ui.Dpi(432, 20)))
 	file := ui.NewStatic(wnd, ui.OptsStatic().Text("").Position(ui.Dpi(14, 36)).Size(ui.Dpi(432, 20)).
 		CtrlStyle(co.SS_LEFT|co.SS_NOPREFIX|co.SS_PATHELLIPSIS))
