@@ -5,8 +5,8 @@ package ui
 // The About window, laid out like most desktop apps' (Firefox, Notepad++,
 // the CDE style guide), everything left aligned: the logo on the left; on the
 // right the name, the version, a one-line description, the author's
-// copyright, the licence, a link to the project and the icon credits, then
-// "Check for updates" and "Close".
+// copyright, the licence, a link to the project (blue) and the icon credits. No
+// buttons: Esc, Enter or the window's close button close it.
 
 import (
 	"fmt"
@@ -32,7 +32,6 @@ const (
 var (
 	procShellExecuteW = shell32.NewProc("ShellExecuteW")
 	procGetSysColor   = user32.NewProc("GetSysColor")
-	procGetObjectW    = gdi32.NewProc("GetObjectW")
 )
 
 // openURL opens a web page in the default browser.
@@ -59,21 +58,9 @@ func appIconList(size int) uintptr {
 	return uintptr(hImg)
 }
 
-// underlined returns an underlined copy of a font.
-func underlined(hFont uintptr) uintptr {
-	var lf logFont
-	if r, _, _ := procGetObjectW.Call(hFont, unsafe.Sizeof(lf), uintptr(unsafe.Pointer(&lf))); r == 0 {
-		return hFont
-	}
-	lf.underline = 1
-	h, _, _ := procCreateFontIndirectW.Call(uintptr(unsafe.Pointer(&lf)))
-	return h
-}
-
-// showAbout shows the About window. checkUpdates runs when the user chooses
-// "Check for updates" (after the window closed).
-func showAbout(parent ui.Parent, version string, checkUpdates func()) {
-	wnd := ui.NewModal(parent, ui.OptsModal().Title("About SSH-Cloud").Size(ui.Dpi(460, 250)))
+// showAbout shows the About window.
+func showAbout(parent ui.Parent, version string) {
+	wnd := ui.NewModal(parent, ui.OptsModal().Title("About SSH-Cloud").Size(ui.Dpi(460, 232)))
 	x, w := 132, 310
 	text := func(t string, y, h int, style co.SS) *ui.Static {
 		return ui.NewStatic(wnd, ui.OptsStatic().Text(t).Position(ui.Dpi(x, y)).Size(ui.Dpi(w, h)).
@@ -89,54 +76,76 @@ func showAbout(parent ui.Parent, version string, checkUpdates func()) {
 	text("The ultimate simple cloud storage client.", 86, 20, 0)
 	text(fmt.Sprintf("© %d %s", max(time.Now().Year(), 2026), author), 114, 20, 0)
 	text("Released under the MIT License.", 136, 20, 0)
-	// A plain label as link: blue and underlined, hand cursor, opens the page.
-	link := text("github.com/mevdschee/ssh-cloud", 158, 20, co.SS_NOTIFY)
 	text("Icons: Fluent UI System Icons by Microsoft (MIT).", 180, 20, 0)
 
-	btnUpdates := ui.NewButton(wnd, ui.OptsButton().Text("Check for &updates").Position(ui.Dpi(x, 212)).
-		Width(ui.DpiX(140)))
-	btnClose := ui.NewButton(wnd, ui.OptsButton().Text("Close").Position(ui.Dpi(x+148, 212)).
-		CtrlId(uint16(co.ID_OK)).CtrlStyle(co.BS_DEFPUSHBUTTON))
-	wantUpdates := false
-	btnUpdates.On().BnClicked(func() { wantUpdates = true; closeModal(wnd) })
-	btnClose.On().BnClicked(func() { closeModal(wnd) })
+	wnd.On().WmCommandAccelMenu(uint16(co.ID_OK), func() { closeModal(wnd) })     // Enter
 	wnd.On().WmCommandAccelMenu(uint16(co.ID_CANCEL), func() { closeModal(wnd) }) // Esc
-
-	link.On().StnClicked(func() { openURL(wnd.Hwnd(), repoURL) })
-	hand, _ := win.HINSTANCE(0).LoadCursor(win.CursorResIdc(co.IDC_HAND))
-	link.OnSubclass().WmSetCursor(func(ui.WmSetCursor) bool {
-		hand.SetCursor()
-		return true
-	})
 
 	normal := uiFont(0)
 	titleFont := uiFontWeight(ui.DpiY(10), 600)
-	linkFont := underlined(normal)
 	wnd.On().WmCreate(func(_ ui.WmCreate) int {
 		applyFont(wnd.Hwnd(), normal)
 		title.Hwnd().SendMessage(co.WM_SETFONT, win.WPARAM(titleFont), 1)
-		link.Hwnd().SendMessage(co.WM_SETFONT, win.WPARAM(linkFont), 1)
 		return 0
 	})
-	// Labels keep the dialog's own background; only the link's text is blue.
+	// Labels keep the dialog's own background.
 	dlgBrush, _ := win.GetSysColorBrush(co.COLOR_BTNFACE)
 	btnFace, _, _ := procGetSysColor.Call(uintptr(co.COLOR_BTNFACE))
 	wnd.On().WmCtlColorStatic(func(p ui.WmCtlColor) win.HBRUSH {
 		p.Hdc().SetBkColor(win.COLORREF(btnFace))
-		if p.HwndControl() == link.Hwnd() {
-			p.Hdc().SetTextColor(win.COLORREF(linkColor))
-		}
 		return dlgBrush
 	})
 
+	// The link is painted by the window itself: blue text, no underline (an
+	// underlined font got an underline wider than the text under Wine).
+	// Clicks and the hand cursor use the text's exact rectangle.
+	var linkRect win.RECT
 	iconSize := ui.DpiX(80)
 	iconList := appIconList(iconSize)
 	wnd.On().WmPaint(func() {
 		var ps paintStruct
 		hdc, _, _ := procBeginPaint.Call(uintptr(wnd.Hwnd()), uintptr(unsafe.Pointer(&ps)))
 		defer procEndPaint.Call(uintptr(wnd.Hwnd()), uintptr(unsafe.Pointer(&ps)))
-		if hdc != 0 && iconList != 0 {
+		if hdc == 0 {
+			return
+		}
+		if iconList != 0 {
 			procImageListDraw.Call(iconList, 0, hdc, uintptr(ui.DpiX(26)), uintptr(ui.DpiY(24)), 1) // ILD_TRANSPARENT
+		}
+		old, _, _ := procSelectObject.Call(hdc, normal)
+		left, top := int32(ui.DpiX(x)), int32(ui.DpiY(158))
+		linkRect = win.RECT{Left: left, Top: top, Right: left + textWidth(hdc, repoURL), Bottom: top + int32(ui.DpiY(20))}
+		procSetBkMode.Call(hdc, 1) // TRANSPARENT
+		procSetTextColor.Call(hdc, linkColor)
+		p, _ := syscall.UTF16FromString(repoURL)
+		r := linkRect
+		procDrawTextW.Call(hdc, uintptr(unsafe.Pointer(&p[0])), uintptr(len(p)-1), uintptr(unsafe.Pointer(&r)),
+			dtLeft|dtSingleLine|dtNoPrefix)
+		procSelectObject.Call(hdc, old)
+	})
+	hand, _ := win.HINSTANCE(0).LoadCursor(win.CursorResIdc(co.IDC_HAND))
+	arrow, _ := win.HINSTANCE(0).LoadCursor(win.CursorResIdc(co.IDC_ARROW))
+	wnd.On().WmSetCursor(func(p ui.WmSetCursor) bool {
+		if p.Hwnd() != wnd.Hwnd() {
+			return false // over a label
+		}
+		if p.Raw.LParam.LoWord() != 1 { // not HTCLIENT: borders and title bar
+			return wnd.Hwnd().DefWindowProc(co.WM_SETCURSOR, p.Raw.WParam, p.Raw.LParam) != 0
+		}
+		pt, err := win.GetCursorPos()
+		if err == nil {
+			wnd.Hwnd().ScreenToClientPt(&pt)
+		}
+		if err == nil && inRect(linkRect, pt) {
+			hand.SetCursor()
+		} else {
+			arrow.SetCursor()
+		}
+		return true
+	})
+	wnd.On().WmLButtonUp(func(p ui.WmMouse) {
+		if inRect(linkRect, p.Pos()) {
+			openURL(wnd.Hwnd(), repoURL)
 		}
 	})
 	wnd.ShowModal()
@@ -144,10 +153,7 @@ func showAbout(parent ui.Parent, version string, checkUpdates func()) {
 	if iconList != 0 {
 		win.HIMAGELIST(iconList).Destroy()
 	}
-	for _, f := range []uintptr{normal, titleFont, linkFont} {
+	for _, f := range []uintptr{normal, titleFont} {
 		procDeleteObject.Call(f)
-	}
-	if wantUpdates && checkUpdates != nil {
-		checkUpdates()
 	}
 }

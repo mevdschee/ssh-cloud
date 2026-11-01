@@ -32,6 +32,7 @@ const (
 // Overflow menu ids.
 const (
 	cmdShowTransfers uint16 = 2201 + iota
+	cmdCheckUpdates
 	cmdAbout
 )
 
@@ -251,13 +252,16 @@ func (me *Explorer) moreMenu() {
 	rc := buttonScreenRect(me.cmdBar, tbMore)
 	items := []menuItem{
 		{id: cmdShowTransfers, text: "&Transfers", enabled: me.isConnected() && !me.busy},
+		{id: cmdCheckUpdates, text: "Check for &updates", enabled: !me.busy},
 		{},
 		{id: cmdAbout, text: "&About ...", enabled: !me.busy},
 	}
 	switch popupMenuAt(me.wnd.Hwnd(), items, win.POINT{X: rc.Left, Y: rc.Bottom}) {
 	case cmdShowTransfers:
 		me.showTransfers()
+	case cmdCheckUpdates:
+		me.checkForUpdates()
 	case cmdAbout:
-		showAbout(me.wnd, me.version, me.checkForUpdates)
+		showAbout(me.wnd, me.version)
 	}
 }

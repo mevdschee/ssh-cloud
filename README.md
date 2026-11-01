@@ -19,7 +19,7 @@ database, no vendor. Just a Windows window on a folder on your server.
 Install the MSI from the [releases](https://github.com/mevdschee/ssh-cloud/releases),
 run SSH-Cloud from the Start menu, enter your server, username and folder, and
 you have a cloud. Log in with your SSH agent, Pageant, a key file or a password.
-Use "Check for updates" in "..." > About to get new versions.
+Use "Check for updates" in the "..." menu to get new versions.
 
 ## Build
 
