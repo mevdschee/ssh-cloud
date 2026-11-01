@@ -26,7 +26,7 @@ func (e *Engine) send(ctx context.Context, localPath, remotePath string) (hashIn
 		return hashInfo{}, fmt.Errorf("create %q: %w", remotePath, err)
 	}
 	h := sha256.New()
-	n, err := dst.ReadFromWithConcurrency(io.TeeReader(ctxReader{ctx, src}, h), 0)
+	n, err := dst.ReadFromWithConcurrency(io.TeeReader(&countingReader{ctx: ctx, r: src, fn: progressOf(ctx)}, h), 0)
 	if cerr := dst.Close(); err == nil {
 		err = cerr
 	}
@@ -90,7 +90,7 @@ func (e *Engine) download(ctx context.Context, p, localPath string) (Result, err
 		return Result{}, err
 	}
 	h := sha256.New()
-	n, err := src.WriteTo(ctxWriter{ctx, io.MultiWriter(dst, h)})
+	n, err := src.WriteTo(&countingWriter{ctx: ctx, w: io.MultiWriter(dst, h), fn: progressOf(ctx)})
 	if cerr := dst.Close(); err == nil {
 		err = cerr
 	}

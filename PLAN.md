@@ -134,7 +134,11 @@ Everything outside `ui` is testable on Linux against a local `sshd`.
    drag in (upload) and drag within (move), Transfers window, stop button.
 5. Drag out to Windows Explorer (COM `IDataObject` with delayed rendering);
    needs testing on real Windows.
-6. Polish: tree, overlays, server-side copy, shortcuts.
+6. Polish: folder tree, shell icons and type names, Status column ("changed
+   on server" since your last transfer), sortable columns, cut/copy/paste
+   (copy is server side with `copy-data`), keyboard shortcuts, and a progress
+   window with cancel for uploads, downloads, copies and deletes, which run
+   on a background goroutine.
 
 ## Known weaknesses (accepted)
 

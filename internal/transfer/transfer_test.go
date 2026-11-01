@@ -486,3 +486,57 @@ func TestOpenSSHServerDoesNotReplace(t *testing.T) {
 		t.Fatalf("OpenSSH-like server must not replace, got %v %v", replaces, err)
 	}
 }
+
+// localCopy stands in for the copy-data extension, which the test server
+// does not have: it copies the file on the server's filesystem directly.
+func localCopy(srv *sshtest.Server) func(context.Context, string, string) error {
+	return func(_ context.Context, from, to string) error {
+		data, err := os.ReadFile(srv.Path(from))
+		if err != nil {
+			return err
+		}
+		f, err := os.OpenFile(srv.Path(to), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+		_, err = f.Write(data)
+		return err
+	}
+}
+
+func TestCopyCarriesHashFile(t *testing.T) {
+	srv := sshtest.Start(t, sshtest.Options{})
+	a := newMachine(t, srv)
+	if a.e.CanCopy() {
+		t.Fatal("the test server has no copy-data")
+	}
+	if err := a.e.Copy(bg, "x", "y"); !errors.Is(err, remote.ErrCopyUnsupported) {
+		t.Fatalf("want ErrCopyUnsupported, got %v", err)
+	}
+	a.e.copyData, a.e.canCopy = localCopy(srv), func() bool { return true }
+
+	a.write("r.txt", "v1")
+	a.upload("r.txt", "docs/r.txt", Check)
+	if err := a.e.Copy(bg, "docs/r.txt", "other/r copy.txt"); err != nil {
+		t.Fatal(err)
+	}
+	if srv.Read("other/r copy.txt") != "v1" || srv.Read("other/.r copy.txt.sha256") != hashFile("v1") {
+		t.Fatal("copy should have the content and the hash file")
+	}
+	if err := a.e.Copy(bg, "docs/r.txt", "other/r copy.txt"); !errors.Is(err, remote.ErrExists) {
+		t.Fatalf("copy must never overwrite, got %v", err)
+	}
+	if left := internalFiles(t, srv); len(left) != 0 {
+		t.Fatalf("leftover files: %v", left)
+	}
+
+	// A source without a valid hash file gives an "unknown version" copy.
+	srv.Write("legacy.txt", "scp")
+	if err := a.e.Copy(bg, "legacy.txt", "legacy2.txt"); err != nil {
+		t.Fatal(err)
+	}
+	if srv.Exists(".legacy2.txt.sha256") {
+		t.Fatal("no hash file may be invented for content nobody hashed")
+	}
+}

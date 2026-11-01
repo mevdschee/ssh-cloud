@@ -12,6 +12,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -39,6 +40,14 @@ const (
 	cmdNewFolder
 	cmdUpload
 	cmdRefresh
+	cmdCut
+	cmdCopy
+	cmdPaste
+	cmdSelectAll
+	cmdBack
+	cmdForward
+	cmdUp
+	cmdAddress
 )
 
 // Explorer is the main window.
@@ -52,8 +61,10 @@ type Explorer struct {
 	btnDelete, btnRefresh      *ui.Button
 	btnTransfers, btnStop      *ui.Button
 	btnConnect                 *ui.Button
+	tree                       *ui.TreeView
 	list                       *ui.ListView
 	status                     *ui.StatusBar
+	progressWnd                *ui.Modal // open progress window, if any
 
 	cfgDir string
 	cfg    *config.Config
@@ -74,6 +85,15 @@ type Explorer struct {
 	back    []string // navigation history
 	forward []string
 	entries []remote.Entry
+
+	canCopy   bool                      // server supports copy-data
+	clip      []remote.Entry            // cut or copied items
+	clipCut   bool                      // clip holds a cut (paste moves)
+	sortCol   int                       // column the list is sorted by
+	sortDesc  bool                      // descending
+	statuses  map[string]app.FileStatus // Status column, by path
+	statusGen int                       // ignores stale status results
+	treeSync  bool                      // selecting a tree node from code
 }
 
 // Run shows the explorer and blocks until it is closed.
@@ -92,6 +112,7 @@ func (me *Explorer) build() {
 		Style(co.WS_CAPTION | co.WS_SYSMENU | co.WS_CLIPCHILDREN | co.WS_BORDER | co.WS_VISIBLE |
 								co.WS_MINIMIZEBOX | co.WS_MAXIMIZEBOX | co.WS_SIZEBOX).
 		ExStyle(co.WS_EX_LEFT | co.WS_EX_ACCEPTFILES). // files dropped from Windows Explorer
+		AccelTable(accelerators()).
 		Center(true))
 
 	small := func(text string, x int) *ui.Button {
@@ -111,7 +132,7 @@ func (me *Explorer) build() {
 		return ui.NewButton(me.wnd, ui.OptsButton().Text(text).Position(ui.Dpi(x, 40)).Width(ui.DpiX(w)))
 	}
 	me.btnUpload = action("&Upload...", 8, 90)
-	me.btnDownload = action("&Download to...", 102, 110)
+	me.btnDownload = action("Do&wnload to...", 102, 110)
 	me.btnNewFolder = action("&New folder", 216, 90)
 	me.btnRename = action("Rena&me", 310, 80)
 	me.btnDelete = action("De&lete", 394, 80)
@@ -120,16 +141,24 @@ func (me *Explorer) build() {
 	me.btnConnect = ui.NewButton(me.wnd, ui.OptsButton().Text("C&onnections...").Position(ui.Dpi(752, 40)).
 		Width(ui.DpiX(100)).Layout(ui.LAY_MOVE_HOLD))
 
-	me.list = ui.NewListView(me.wnd, ui.OptsListView().
+	me.tree = ui.NewTreeView(me.wnd, ui.OptsTreeView().
 		Position(ui.Dpi(8, 74)).
-		Size(ui.Dpi(844, 452)).
+		Size(ui.Dpi(200, 452)).
+		Layout(ui.LAY_HOLD_RESIZE).
+		CtrlStyle(co.TVS_HASBUTTONS|co.TVS_HASLINES|co.TVS_LINESATROOT|co.TVS_SHOWSELALWAYS))
+	// LVS_SHAREIMAGELISTS: the list shows the system image list, which it
+	// must never destroy.
+	me.list = ui.NewListView(me.wnd, ui.OptsListView().
+		Position(ui.Dpi(212, 74)).
+		Size(ui.Dpi(640, 452)).
 		Layout(ui.LAY_RESIZE_RESIZE).
-		CtrlStyle(co.LVS_REPORT|co.LVS_NOSORTHEADER|co.LVS_SHOWSELALWAYS|co.LVS_EDITLABELS).
+		CtrlStyle(co.LVS_REPORT|co.LVS_SHOWSELALWAYS|co.LVS_EDITLABELS|co.LVS_SHAREIMAGELISTS).
 		CtrlExStyle(co.LVS_EX_FULLROWSELECT|co.LVS_EX_DOUBLEBUFFER).
-		Column("Name", ui.DpiX(360)).
-		Column("Date modified", ui.DpiX(140)).
-		Column("Type", ui.DpiX(160)).
-		Column("Size", ui.DpiX(100)))
+		Column("Name", ui.DpiX(240)).
+		Column("Date modified", ui.DpiX(120)).
+		Column("Type", ui.DpiX(130)).
+		Column("Size", ui.DpiX(80)).
+		Column("Status", ui.DpiX(120)))
 
 	me.status = ui.NewStatusBar(me.wnd, ui.OptsStatusBar().
 		FlexPart(1, "Not connected").
@@ -139,6 +168,10 @@ func (me *Explorer) build() {
 func (me *Explorer) events() {
 	me.wnd.On().WmCreate(func(_ ui.WmCreate) int {
 		me.list.Col(3).SetJustification(co.HDF_RIGHT)
+		sys := systemImageList()
+		me.list.Hwnd().SendMessage(co.LVM_SETIMAGELIST, win.WPARAM(co.LVSIL_SMALL), win.LPARAM(sys))
+		me.tree.Hwnd().SendMessage(co.TVM_SETIMAGELIST, win.WPARAM(co.TVSIL_NORMAL), win.LPARAM(sys))
+		me.updateSortArrows()
 		me.updateButtons()
 		cleanDragTemp()
 		me.wnd.UiThread(me.startup) // after the window is shown
@@ -182,33 +215,16 @@ func (me *Explorer) events() {
 	})
 	me.dragEvents()
 
-	// Enter: the dialog manager sends IDOK. Navigate from the address bar,
-	// open the selection from the list.
-	me.wnd.On().WmCommandAccelMenu(uint16(co.ID_OK), func() {
-		if focus := win.GetFocus(); focus == me.address.Hwnd() {
-			me.navigate(me.address.Text(), true)
-		} else {
-			me.open()
-		}
-	})
-
 	me.list.On().LvnItemActivate(func(_ *win.NMITEMACTIVATE) { me.open() })
 	me.list.On().LvnItemChanged(func(_ *win.NMLISTVIEW) { me.updateButtons() })
 	me.list.On().LvnKeyDown(func(p *win.NMLVKEYDOWN) {
-		ctrl, _ := win.GetKeyState(co.VK_CONTROL)
-		switch {
-		case p.WVKey == co.VK_BACK:
+		if p.WVKey == co.VK_BACK {
 			me.goUp()
-		case p.WVKey == co.VK_F2:
-			me.startRename()
-		case p.WVKey == co.VK_DELETE:
-			me.delete()
-		case p.WVKey == co.VK_F5:
-			me.refresh()
-		case ctrl && p.WVKey == co.VK('A'):
-			me.list.SelectAllItems(true)
 		}
 	})
+	me.list.On().LvnColumnClick(func(p *win.NMLISTVIEW) { me.sortBy(int(p.ISubItem)) })
+	me.commandEvents()
+	me.treeEvents()
 	me.list.On().NmRClick(func(_ *win.NMITEMACTIVATE) { me.contextMenu() })
 	me.list.On().LvnBeginLabelEdit(func(_ *win.NMLVDISPINFO) bool {
 		return !me.isConnected() // returning true cancels the edit
@@ -400,6 +416,7 @@ func (me *Explorer) connect(p config.Profile, automatic bool) {
 			defer logging.Recover("connect")
 			a, err = app.Open(me.ctx, rc, p.TransferLogFile(me.cfgDir))
 		}()
+		canCopy := err == nil && a.CanCopy(me.ctx)
 		me.wnd.UiThread(func() {
 			me.busy = false
 			if err != nil {
@@ -424,6 +441,9 @@ func (me *Explorer) connect(p config.Profile, automatic bool) {
 			}
 			me.wnd.Hwnd().SetWindowText("SSH-Cloud - " + p.DisplayName())
 			me.dir, me.back, me.forward = "", nil, nil
+			me.canCopy, me.clip = canCopy, nil
+			slog.Info("server-side copy", "available", canCopy)
+			me.resetTree(p.DisplayName())
 			me.navigate("", false)
 		})
 	}()
@@ -452,6 +472,7 @@ func (me *Explorer) navigate(dir string, remember bool) {
 		}
 		me.dir = dir
 		me.show(entries)
+		me.syncTree(dir, entries)
 		me.setStatus("Ready")
 	})
 }
@@ -482,13 +503,21 @@ func (me *Explorer) goForward() {
 	}
 }
 
-// show fills the list.
+// show fills the list, sorted by the current sort column, and starts the
+// Status column check in the background.
 func (me *Explorer) show(entries []remote.Entry) {
 	me.entries = entries
+	me.sortEntries()
 	me.address.SetText("/" + me.dir)
+	me.fillList()
+	me.updateButtons()
+	me.loadStatuses()
+}
+
+func (me *Explorer) fillList() {
 	me.list.SetRedraw(false)
 	me.list.DeleteAllItems()
-	for _, e := range entries {
+	for _, e := range me.entries {
 		modified, size := "", ""
 		if !e.ModTime.IsZero() {
 			modified = e.ModTime.Local().Format("2006-01-02 15:04")
@@ -496,22 +525,120 @@ func (me *Explorer) show(entries []remote.Entry) {
 		if !e.IsDir {
 			size = humanSize(e.Size)
 		}
-		item := me.list.AddItem(e.Name, modified, typeName(e), size)
+		st := shellTypeOf(e.Name, e.IsDir)
+		item := me.list.AddItem(e.Name, modified, st.name, size, statusText(me.statuses[e.Path]))
 		item.SetData(e)
+		setListImage(me.list.Hwnd(), item.Index(), st.icon)
 	}
 	me.list.SetRedraw(true)
-	me.updateButtons()
 }
 
-func typeName(e remote.Entry) string {
-	if e.IsDir {
-		return "File folder"
+func statusText(s app.FileStatus) string {
+	switch s {
+	case app.StatusChanged:
+		return "Changed on server"
+	case app.StatusUpToDate:
+		return "Up to date"
 	}
-	ext := strings.TrimPrefix(path.Ext(e.Name), ".")
-	if ext == "" || ext == e.Name[1:] {
-		return "File"
+	return ""
+}
+
+// loadStatuses fills the Status column: for files this client transferred,
+// whether the server still has that version (one small read per file).
+func (me *Explorer) loadStatuses() {
+	me.mu.Lock()
+	a := me.app
+	me.mu.Unlock()
+	me.statusGen++
+	gen, dir := me.statusGen, me.dir
+	entries := slices.Clone(me.entries)
+	me.statuses = nil
+	if a == nil {
+		return
 	}
-	return strings.ToUpper(ext) + " File"
+	go func() {
+		defer logging.Recover("status")
+		st := a.Status(me.ctx, entries)
+		me.wnd.UiThread(func() {
+			if gen != me.statusGen || dir != me.dir {
+				return // the list changed meanwhile
+			}
+			me.statuses = st
+			for _, item := range me.list.Items() {
+				if e, ok := item.Data().(remote.Entry); ok {
+					item.SetText(4, statusText(st[e.Path]))
+				}
+			}
+		})
+	}()
+}
+
+// sortBy sorts by a column; clicking the same column again reverses.
+func (me *Explorer) sortBy(col int) {
+	if col == me.sortCol {
+		me.sortDesc = !me.sortDesc
+	} else {
+		me.sortCol, me.sortDesc = col, false
+	}
+	me.updateSortArrows()
+	me.sortEntries()
+	me.fillList()
+}
+
+func (me *Explorer) updateSortArrows() {
+	for i := 0; i < me.list.ColCount(); i++ {
+		arrow := co.HDF_NONE
+		if i == me.sortCol {
+			arrow = co.HDF_SORTUP
+			if me.sortDesc {
+				arrow = co.HDF_SORTDOWN
+			}
+		}
+		me.list.Col(i).SetSortArrow(arrow)
+	}
+}
+
+// sortEntries sorts the entries; folders always come first, like Explorer.
+func (me *Explorer) sortEntries() {
+	byCol := func(a, b remote.Entry) int {
+		switch me.sortCol {
+		case 1:
+			return a.ModTime.Compare(b.ModTime)
+		case 2:
+			return strings.Compare(strings.ToLower(shellTypeOf(a.Name, a.IsDir).name), strings.ToLower(shellTypeOf(b.Name, b.IsDir).name))
+		case 3:
+			return cmpInt64(a.Size, b.Size)
+		case 4:
+			return int(me.statuses[a.Path]) - int(me.statuses[b.Path])
+		}
+		return 0
+	}
+	slices.SortStableFunc(me.entries, func(a, b remote.Entry) int {
+		if a.IsDir != b.IsDir {
+			if a.IsDir {
+				return -1
+			}
+			return 1
+		}
+		c := byCol(a, b)
+		if c == 0 {
+			c = strings.Compare(strings.ToLower(a.Name), strings.ToLower(b.Name))
+		}
+		if me.sortDesc {
+			c = -c
+		}
+		return c
+	})
+}
+
+func cmpInt64(a, b int64) int {
+	switch {
+	case a < b:
+		return -1
+	case a > b:
+		return 1
+	}
+	return 0
 }
 
 func (me *Explorer) selected() []remote.Entry {
@@ -550,19 +677,29 @@ func (me *Explorer) contextMenu() {
 		{id: cmdOpen, text: openText, enabled: n == 1, bold: true},
 		{id: cmdDownload, text: "Download &to...", enabled: n > 0},
 		{},
-		{id: cmdRename, text: "Rena&me", enabled: n == 1},
-		{id: cmdDelete, text: "&Delete", enabled: n > 0},
-		{id: cmdCopyPath, text: "Copy &path", enabled: n > 0},
+		{id: cmdCut, text: "Cu&t\tCtrl+X", enabled: n > 0},
+		{id: cmdCopy, text: copyMenuText(me.canCopy), enabled: n > 0 && me.canCopy},
+		{id: cmdPaste, text: "&Paste\tCtrl+V", enabled: len(me.clip) > 0},
 		{},
-		{id: cmdNewFolder, text: "&New folder", enabled: true},
+		{id: cmdRename, text: "Rena&me\tF2", enabled: n == 1},
+		{id: cmdDelete, text: "&Delete\tDel", enabled: n > 0},
+		{id: cmdCopyPath, text: "Copy pat&h", enabled: n > 0},
+		{},
+		{id: cmdNewFolder, text: "&New folder\tCtrl+Shift+N", enabled: true},
 		{id: cmdUpload, text: "&Upload...", enabled: true},
-		{id: cmdRefresh, text: "Re&fresh", enabled: true},
+		{id: cmdRefresh, text: "Re&fresh\tF5", enabled: true},
 	}
 	switch popupMenu(me.wnd.Hwnd(), items) {
 	case cmdOpen:
 		me.open()
 	case cmdDownload:
 		me.download()
+	case cmdCut:
+		me.toClipboard(true)
+	case cmdCopy:
+		me.toClipboard(false)
+	case cmdPaste:
+		me.paste()
 	case cmdRename:
 		me.startRename()
 	case cmdDelete:
@@ -601,7 +738,7 @@ func (me *Explorer) rename(e remote.Entry, name string) {
 		if err != nil {
 			ui.MsgError(me.wnd, "Rename", "Could not rename "+e.Name, err.Error())
 		}
-		me.refresh()
+		me.refreshAll()
 	})
 }
 
@@ -620,7 +757,7 @@ func (me *Explorer) newFolder() {
 		if err != nil {
 			ui.MsgError(me.wnd, "New folder", "Could not create the folder", err.Error())
 		}
-		me.refresh()
+		me.refreshAll()
 	})
 }
 
@@ -644,13 +781,14 @@ func (me *Explorer) delete() {
 	for _, e := range sel {
 		paths = append(paths, e.Path)
 	}
-	me.run("Deleting...", func(ctx context.Context, a *app.App) error {
-		return a.Delete(ctx, paths)
+	me.runWithProgress("Deleting", func(ctx context.Context, a *app.App, progress app.Progress) error {
+		return a.Delete(ctx, paths, progress)
 	}, func(err error) {
+		me.setStatus("Ready")
 		if err != nil {
 			ui.MsgError(me.wnd, "Delete", "Some items could not be deleted", err.Error())
 		}
-		me.refresh()
+		me.refreshAll()
 	})
 }
 
@@ -668,15 +806,15 @@ func (me *Explorer) uploadFiles(files []string, dir string) {
 	}
 	slog.Info("upload requested", "files", len(files), "to", dir)
 	var summary app.Summary
-	me.run("Uploading...", func(ctx context.Context, a *app.App) error {
-		summary = a.Upload(ctx, files, dir, me.decide, me.progress)
+	me.runWithProgress("Uploading", func(ctx context.Context, a *app.App, progress app.Progress) error {
+		summary = a.Upload(ctx, files, dir, me.decide, progress)
 		return errors.Join(summary.Errors...)
 	}, func(err error) {
 		me.setStatus("Upload: " + summary.String())
 		if err != nil {
 			ui.MsgError(me.wnd, "Upload", "Some files could not be uploaded", err.Error())
 		}
-		me.refresh()
+		me.refreshAll()
 	})
 }
 
@@ -703,8 +841,8 @@ func (me *Explorer) download() {
 		paths = append(paths, e.Path)
 	}
 	var summary app.Summary
-	me.run("Downloading...", func(ctx context.Context, a *app.App) error {
-		summary = a.Download(ctx, paths, dst, me.overwriteLocal, me.progress)
+	me.runWithProgress("Downloading", func(ctx context.Context, a *app.App, progress app.Progress) error {
+		summary = a.Download(ctx, paths, dst, me.overwriteLocal, progress)
 		return errors.Join(summary.Errors...)
 	}, func(err error) {
 		me.setStatus("Download: " + summary.String())
@@ -716,14 +854,10 @@ func (me *Explorer) download() {
 
 // --- callbacks from worker goroutines ---
 
-func (me *Explorer) progress(msg string) {
-	me.wnd.UiThread(func() { me.setStatus(msg) })
-}
-
 func (me *Explorer) decide(c *transfer.ConflictError, localPath string) (app.Choice, bool) {
 	var choice app.Choice
 	var all bool
-	me.onUI(func() { choice, all = showConflict(me.wnd, c, localPath) })
+	me.onUI(func() { choice, all = showConflict(me.dialogParent(), c, localPath) })
 	slog.Info("conflict decision", "remote", c.Path, "reason", c.Reason, "local", localPath, "choice", choice, "applyAll", all)
 	return choice, all
 }
@@ -731,7 +865,7 @@ func (me *Explorer) decide(c *transfer.ConflictError, localPath string) (app.Cho
 func (me *Explorer) overwriteLocal(localPath string) (bool, bool) {
 	var ok bool
 	me.onUI(func() {
-		ok = ui.MsgOkCancel(me.wnd, "Download", "Replace local file?",
+		ok = ui.MsgOkCancel(me.dialogParent(), "Download", "Replace local file?",
 			localPath+" already exists. Replace it with the version from the server?", "Replace")
 	})
 	slog.Info("overwrite local decision", "local", localPath, "overwrite", ok)
@@ -887,7 +1021,7 @@ func (me *Explorer) moveInto(entries []remote.Entry, target remote.Entry) {
 		if err != nil {
 			ui.MsgError(me.wnd, "Move", "Some items could not be moved", err.Error())
 		}
-		me.refresh()
+		me.refreshAll()
 	})
 }
 

@@ -2,10 +2,12 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/mevdschee/ssh-cloud/internal/remote"
 	"github.com/mevdschee/ssh-cloud/internal/sshtest"
 	"github.com/mevdschee/ssh-cloud/internal/transfer"
 )
@@ -87,7 +89,7 @@ func TestRenameAndDeleteVirtualFolder(t *testing.T) {
 	if err != nil || !a.IsVirtual(to) || !a.IsVirtual("renamed/inner") {
 		t.Fatalf("rename virtual: %v", err)
 	}
-	if err := a.Delete(bg, []string{to}); err != nil || a.IsVirtual(to) {
+	if err := a.Delete(bg, []string{to}, nil); err != nil || a.IsVirtual(to) {
 		t.Fatalf("delete virtual: %v", err)
 	}
 }
@@ -204,5 +206,80 @@ func TestDragItems(t *testing.T) {
 	}
 	if e, ok := a.Log().Latest("docs/proj/sub/b.txt"); !ok || e.Size != 2 {
 		t.Fatal("drag download must be recorded in the transfer list")
+	}
+}
+
+func TestCopyWithExplorerNamesAndProgress(t *testing.T) {
+	srv := sshtest.Start(t, sshtest.Options{})
+	srv.Write("docs/r.txt", "r")
+	srv.Write("docs/proj/a.txt", "aa")
+	srv.Write("docs/proj/sub/b.txt", "bbb")
+	a := open(t, srv)
+	if a.CanCopy(bg) {
+		t.Fatal("test server has no copy-data")
+	}
+	_, e, _ := a.conn(bg)
+	e.SetCopyFunc(func(_ context.Context, from, to string) error {
+		data, err := os.ReadFile(srv.Path(from))
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(srv.Path(to), data, 0o644)
+	})
+
+	entries, _ := a.List(bg, "docs")
+	var last ProgressInfo
+	s := a.Copy(bg, entries, "docs", func(p ProgressInfo) { last = p })
+	if s.Done != 3 || len(s.Errors) != 0 {
+		t.Fatalf("copy: %v %v", s, s.Errors)
+	}
+	if srv.Read("docs/r - Copy.txt") != "r" || srv.Read("docs/proj - Copy/sub/b.txt") != "bbb" {
+		t.Fatal("copies into the same folder get Explorer style names")
+	}
+	if last.FileCount != 3 || last.Bytes != 6 || last.TotalBytes != 6 {
+		t.Fatalf("progress %+v", last)
+	}
+	// A second copy picks the next free name.
+	s = a.Copy(bg, []remote.Entry{entries[1]}, "docs", nil)
+	if s.Done != 1 || srv.Read("docs/r - Copy (2).txt") != "r" {
+		t.Fatalf("second copy: %v %s", s, fmt.Sprint(s.Errors))
+	}
+	// Copying a folder into itself is refused.
+	s = a.Copy(bg, []remote.Entry{entries[0]}, "docs/proj/sub", nil)
+	if len(s.Errors) != 1 || s.Done != 0 {
+		t.Fatalf("copy into itself: %v", s)
+	}
+}
+
+func TestUploadDownloadProgress(t *testing.T) {
+	srv := sshtest.Start(t, sshtest.Options{})
+	a := open(t, srv)
+	dir := t.TempDir()
+	f1 := writeLocal(t, dir, "one.txt", "12345")
+	f2 := writeLocal(t, dir, "two.txt", "123")
+	var last ProgressInfo
+	a.Upload(bg, []string{f1, f2}, "", nil, func(p ProgressInfo) { last = p })
+	if last.FileCount != 2 || last.FileIndex != 1 || last.Bytes != 8 || last.TotalBytes != 8 {
+		t.Fatalf("upload progress %+v", last)
+	}
+	last = ProgressInfo{}
+	a.Download(bg, []string{"one.txt", "two.txt"}, t.TempDir(), nil, func(p ProgressInfo) { last = p })
+	if last.Bytes != 8 || last.TotalBytes != 8 || last.Action != "Downloading" {
+		t.Fatalf("download progress %+v", last)
+	}
+}
+
+func TestStatus(t *testing.T) {
+	srv := sshtest.Start(t, sshtest.Options{})
+	a, b := open(t, srv), open(t, srv)
+	dir := t.TempDir()
+	a.Upload(bg, []string{writeLocal(t, dir, "x.txt", "1"), writeLocal(t, dir, "y.txt", "1")}, "", nil, nil)
+	srv.Write("z.txt", "never transferred")
+	b.Upload(bg, []string{writeLocal(t, t.TempDir(), "y.txt", "2")}, "", func(*transfer.ConflictError, string) (Choice, bool) { return Replace, false }, nil)
+
+	entries, _ := a.List(bg, "")
+	st := a.Status(bg, entries)
+	if st["x.txt"] != StatusUpToDate || st["y.txt"] != StatusChanged || st["z.txt"] != StatusUnknown {
+		t.Fatalf("status %v", st)
 	}
 }

@@ -18,7 +18,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"log/slog"
 	"math/rand/v2"
@@ -96,6 +95,11 @@ type Engine struct {
 	pending map[string]pendingTemp // remote path -> uploaded temp awaiting a decision
 
 	beforeCommit func() // test hook: runs after the content is sent
+
+	// copyData copies file content on the server (remote.Client.RawCopyData;
+	// replaced in tests, whose server has no copy-data extension).
+	copyData func(ctx context.Context, from, to string) error
+	canCopy  func() bool
 }
 
 type pendingTemp struct {
@@ -105,7 +109,8 @@ type pendingTemp struct {
 
 // New creates an engine.
 func New(c *remote.Client, log *transferlog.Log) *Engine {
-	return &Engine{c: c, log: log, pending: map[string]pendingTemp{}}
+	return &Engine{c: c, log: log, pending: map[string]pendingTemp{},
+		copyData: c.RawCopyData, canCopy: c.CanCopy}
 }
 
 func (e *Engine) claimWait() time.Duration {
@@ -552,27 +557,72 @@ func backoff() {
 	time.Sleep(time.Duration(10+rand.IntN(40)) * time.Millisecond)
 }
 
-// ctxReader stops a copy when the context is cancelled.
-type ctxReader struct {
-	ctx context.Context
-	r   io.Reader
-}
+// CanCopy reports whether server-side copy is available.
+func (e *Engine) CanCopy() bool { return e.canCopy() }
 
-func (r ctxReader) Read(b []byte) (int, error) {
-	if err := r.ctx.Err(); err != nil {
-		return 0, err
+// Copy copies a file on the server to a new path without moving the content
+// through the client. The target must not exist (ErrExists). The copy goes to
+// a temp file first and is renamed into place with a rename that never
+// overwrites. The hash file is carried over only when it is valid for the
+// source and did not change during the copy; otherwise the copy is an
+// "unknown version".
+func (e *Engine) Copy(ctx context.Context, from, to string) error {
+	from, to = remote.Clean(from), remote.Clean(to)
+	if err := validTarget(to); err != nil {
+		return err
 	}
-	return r.r.Read(b)
-}
-
-type ctxWriter struct {
-	ctx context.Context
-	w   io.Writer
-}
-
-func (w ctxWriter) Write(b []byte) (int, error) {
-	if err := w.ctx.Err(); err != nil {
-		return 0, err
+	if !e.canCopy() {
+		return remote.ErrCopyUnsupported
 	}
-	return w.w.Write(b)
+	if _, err := e.c.RawLstat(to); err == nil {
+		return fmt.Errorf("copy to %q: %w", to, remote.ErrExists)
+	}
+	before, beforeOK, err := e.readHash(from)
+	if err != nil {
+		return err
+	}
+	if err := e.c.MkdirAll(remote.Dir(to)); err != nil {
+		return err
+	}
+	tmp := remote.Join(remote.Dir(to), remote.TempName(remote.Base(to)))
+	if err := e.copyData(ctx, from, tmp); err != nil {
+		_ = e.c.RawRemove(tmp)
+		e.c.Prune(remote.Dir(to))
+		return err
+	}
+	fi, err := e.c.RawLstat(tmp)
+	if err != nil {
+		_ = e.c.RawRemove(tmp)
+		return err
+	}
+	after, afterOK, _ := e.readHash(from)
+	if err := e.renameNoReplace(tmp, to); err != nil {
+		_ = e.c.RawRemove(tmp)
+		return err
+	}
+	if beforeOK && afterOK && before == after && before.Size == fi.Size() {
+		if err := e.writeHash(to, before); err != nil {
+			return err
+		}
+	}
+	slog.Info("copy done", "from", from, "to", to, "size", fi.Size(), "hashCarried", beforeOK && afterOK && before == after)
+	return nil
+}
+
+// SetCopyFunc replaces the server-side copy primitive. It is meant for tests
+// whose server lacks the copy-data extension.
+func (e *Engine) SetCopyFunc(fn func(ctx context.Context, from, to string) error) {
+	e.copyData, e.canCopy = fn, func() bool { return true }
+}
+
+// ServerChanged compares a file on the server with this client's last
+// transfer of it, reading only its hash file. known is false when this
+// client never transferred the file.
+func (e *Engine) ServerChanged(p string, size int64) (changed, known bool, err error) {
+	p = remote.Clean(p)
+	if _, ok := e.log.Latest(p); !ok {
+		return false, false, nil
+	}
+	reason, _, err := e.compare(p, size)
+	return reason != "", true, err
 }
