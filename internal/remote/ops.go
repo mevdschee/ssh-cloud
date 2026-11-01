@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"os"
 	"sort"
 	"strings"
@@ -151,6 +152,7 @@ func (c *Client) Move(from, to string) error {
 		c.moveHashFile(from, to)
 	}
 	c.prune(Dir(from))
+	slog.Info("moved", "from", from, "to", to)
 	return nil
 }
 
@@ -188,6 +190,7 @@ func (c *Client) Delete(p string) error {
 		return fmt.Errorf("delete %q: %w", p, err)
 	}
 	c.prune(Dir(p))
+	slog.Info("deleted", "path", p, "dir", fi.IsDir())
 	return nil
 }
 

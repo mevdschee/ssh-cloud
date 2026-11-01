@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
 	"math/rand/v2"
 	"os"
 	"sync"
@@ -140,7 +141,16 @@ func (e *Engine) Upload(ctx context.Context, localPath, remotePath string, mode 
 	}
 	entry := transferlog.Entry{Direction: transferlog.Upload, RemotePath: p, LocalPath: localPath, Size: local.Size, Hash: local.Hash}
 
+	slog.Debug("upload", "local", localPath, "remote", p, "mode", mode, "size", local.Size, "sha256", local.Hash)
 	res, err := e.upload(ctx, localPath, p, mode, local)
+	switch {
+	case err == nil:
+		slog.Info("upload done", "remote", res.Path, "outcome", res.Outcome, "size", res.Size)
+	case errors.Is(err, ErrConflict):
+		slog.Info("upload conflict", "remote", p, "err", err)
+	default:
+		slog.Error("upload failed", "local", localPath, "remote", p, "err", err)
+	}
 	switch {
 	case err == nil:
 		entry.RemotePath, entry.Result = res.Path, res.Outcome
@@ -189,6 +199,7 @@ func (e *Engine) upload(ctx context.Context, localPath, p string, mode Mode, loc
 // Skip discards an upload that ended in a conflict.
 func (e *Engine) Skip(localPath, remotePath string) error {
 	p := remote.Clean(remotePath)
+	slog.Info("upload skipped", "local", localPath, "remote", p)
 	e.dropPending(p)
 	e.c.Prune(remote.Dir(p))
 	return e.log.Add(transferlog.Entry{Direction: transferlog.Upload, RemotePath: p, LocalPath: localPath, Result: transferlog.Skipped})
@@ -335,8 +346,10 @@ func (e *Engine) commit(ctx context.Context, p, tmp string, mode Mode, local has
 		if errors.Is(err, remote.ErrNotFound) {
 			// Another client claimed it first; wait for its new version.
 			if time.Now().After(deadline) {
+				slog.Warn("file busy, giving up", "path", p)
 				return Result{}, ErrBusy
 			}
+			slog.Debug("claim lost to another client, waiting", "path", p)
 			backoff()
 			continue
 		}
@@ -421,13 +434,19 @@ func (e *Engine) keepBoth(tmp, p string) (string, error) {
 // restore renames a claim back to its file. If that name is taken meanwhile,
 // the claimed version is preserved under a free name instead of being lost.
 func (e *Engine) restore(claim, p string) {
-	if err := e.renameNoReplace(claim, p); errors.Is(err, remote.ErrExists) {
+	err := e.renameNoReplace(claim, p)
+	if errors.Is(err, remote.ErrExists) {
 		e.preserve(claim, p)
+		return
+	}
+	if err != nil {
+		slog.Error("could not restore claimed file", "claim", claim, "path", p, "err", err)
 	}
 }
 
 func (e *Engine) preserve(claim, p string) {
-	_, _ = e.keepBoth(claim, p)
+	saved, err := e.keepBoth(claim, p)
+	slog.Warn("claimed version preserved under a new name", "path", p, "savedAs", saved, "err", err)
 }
 
 // renameNoReplace renames without ever replacing the target. On servers whose
@@ -463,6 +482,7 @@ func (e *Engine) waitStat(ctx context.Context, p string) (os.FileInfo, error) {
 			return nil, err
 		}
 		if time.Now().After(deadline) {
+			slog.Warn("claim outlived the wait, treating it as left by a crash", "claim", claims[0], "path", p)
 			e.restore(claims[0], p)
 			deadline = time.Now().Add(e.claimWait())
 			continue
@@ -510,6 +530,7 @@ func (e *Engine) Recover(dir string) (int, error) {
 		p := remote.Join(dir, name)
 		if _, err := e.c.RawLstat(p); errors.Is(err, fs.ErrNotExist) {
 			if e.renameNoReplace(remote.Join(dir, fi.Name()), p) == nil {
+				slog.Info("recovered claimed file", "path", p, "claim", fi.Name())
 				n++
 			}
 		}

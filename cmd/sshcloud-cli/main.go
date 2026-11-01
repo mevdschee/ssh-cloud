@@ -36,7 +36,7 @@ func main() {
 	cfg := remote.Config{UseAgent: true}
 	flag.StringVar(&cfg.Host, "host", "", "server host name")
 	flag.IntVar(&cfg.Port, "port", 22, "server port")
-	flag.StringVar(&cfg.User, "user", "", "shared account name")
+	flag.StringVar(&cfg.User, "user", "", "username on the server")
 	flag.StringVar(&cfg.Root, "root", "", "cloud folder on the server (default: home directory)")
 	flag.StringVar(&cfg.KeyFile, "key", "", "private key file (default: ssh-agent only)")
 	flag.StringVar(&cfg.KnownHostsFile, "known-hosts", filepath.Join(home, ".ssh", "known_hosts"), "known_hosts file")

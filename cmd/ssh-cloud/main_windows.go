@@ -1,0 +1,62 @@
+// Command ssh-cloud is the SSH-Cloud explorer for Windows.
+package main
+
+import (
+	"fmt"
+	"log/slog"
+	"os"
+	"runtime"
+	"runtime/debug"
+
+	"github.com/mevdschee/ssh-cloud/internal/config"
+	"github.com/mevdschee/ssh-cloud/internal/logging"
+	"github.com/mevdschee/ssh-cloud/internal/ui"
+	"github.com/rodrigocfd/windigo/co"
+	wui "github.com/rodrigocfd/windigo/ui"
+	"github.com/rodrigocfd/windigo/win"
+)
+
+func main() {
+	runtime.LockOSThread() // the Win32 GUI is single-threaded
+
+	dir, err := config.Dir()
+	if err != nil {
+		wui.MsgError(nil, "SSH-Cloud", "No settings folder", err.Error())
+		os.Exit(1)
+	}
+	logFile, closeLog, err := logging.Setup(dir)
+	if err != nil {
+		wui.MsgError(nil, "SSH-Cloud", "Could not open the log file", err.Error())
+	} else {
+		defer closeLog()
+	}
+	version := "dev"
+	if bi, ok := debug.ReadBuildInfo(); ok {
+		for _, s := range bi.Settings {
+			if s.Key == "vcs.revision" {
+				version = s.Value
+			}
+		}
+	}
+	slog.Info("start", "version", version, "go", runtime.Version(), "settings", dir, "log", logFile)
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("crash", "panic", fmt.Sprint(r), "stack", string(debug.Stack()))
+			wui.MsgError(nil, "SSH-Cloud", "SSH-Cloud crashed", fmt.Sprintf("%v\n\nDetails are in %s", r, logFile))
+			os.Exit(2)
+		}
+	}()
+
+	_, _ = win.CoInitializeEx(co.COINIT_APARTMENTTHREADED | co.COINIT_DISABLE_OLE1DDE)
+	defer win.CoUninitialize()
+
+	cfg, err := config.Load(dir)
+	if err != nil {
+		slog.Error("read settings", "err", err)
+		wui.MsgError(nil, "SSH-Cloud", "Could not read settings", err.Error())
+		cfg = &config.Config{}
+	}
+	code := ui.Run(dir, cfg)
+	slog.Info("exit", "code", code)
+	os.Exit(code)
+}

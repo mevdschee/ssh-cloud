@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"path"
 	"sync"
@@ -37,7 +38,15 @@ type Client struct {
 
 // Dial connects, authenticates with a public key, verifies the host key and
 // opens the SFTP session. The cloud root must exist and be a directory.
-func Dial(ctx context.Context, cfg Config) (*Client, error) {
+func Dial(ctx context.Context, cfg Config) (c *Client, err error) {
+	slog.Info("dial", "addr", cfg.addr(), "user", cfg.User, "root", cfg.Root, "keyFile", cfg.KeyFile, "agent", cfg.UseAgent)
+	defer func() {
+		if err != nil {
+			slog.Error("dial failed", "addr", cfg.addr(), "err", err)
+		} else {
+			slog.Info("connected", "addr", cfg.addr(), "root", c.root)
+		}
+	}()
 	auth, agentConn, err := authMethods(cfg)
 	if err != nil {
 		return nil, err
@@ -106,7 +115,7 @@ func Dial(ctx context.Context, cfg Config) (*Client, error) {
 		return nil, fmt.Errorf("cloud root %s: %w", root, err)
 	}
 
-	c := &Client{
+	c = &Client{
 		ssh:   sshClient,
 		sftp:  sftpClient,
 		agent: agentConn,
@@ -147,6 +156,11 @@ func (c *Client) Close() error {
 
 func (c *Client) fail(err error) {
 	c.closeOnce.Do(func() {
+		if errors.Is(err, ErrClosed) {
+			slog.Debug("connection closed")
+		} else {
+			slog.Warn("connection ended", "err", err)
+		}
 		c.mu.Lock()
 		c.err = err
 		c.mu.Unlock()

@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 
@@ -45,6 +46,9 @@ func (e *Engine) Download(ctx context.Context, remotePath, localPath string) (Re
 	entry := transferlog.Entry{Direction: transferlog.Download, RemotePath: p, LocalPath: localPath, Size: res.Size, Hash: res.Hash, Result: transferlog.Done}
 	if err != nil {
 		entry.Result, entry.Error, entry.Hash = transferlog.Failed, err.Error(), ""
+		slog.Error("download failed", "remote", p, "local", localPath, "err", err)
+	} else {
+		slog.Info("download done", "remote", p, "local", localPath, "size", res.Size, "sha256", res.Hash)
 	}
 	if lerr := e.log.Add(entry); lerr != nil && err == nil {
 		err = fmt.Errorf("record transfer: %w", lerr)
@@ -101,6 +105,7 @@ func (e *Engine) download(ctx context.Context, p, localPath string) (Result, err
 	read := hashInfo{Hash: hex.EncodeToString(h.Sum(nil)), Size: n}
 
 	if !beforeOK || before != read {
+		slog.Info("hash file out of sync, repairing", "path", p, "hashFileValid", beforeOK, "hashFile", before.Hash, "read", read.Hash)
 		e.repairHash(p, before, beforeOK, read)
 	}
 	return Result{Path: p, Size: read.Size, Hash: read.Hash, Outcome: transferlog.Done}, nil
@@ -115,6 +120,7 @@ func (e *Engine) download(ctx context.Context, p, localPath string) (Result, err
 func (e *Engine) repairHash(p string, stale hashInfo, staleOK bool, read hashInfo) {
 	claim := remote.Join(remote.Dir(p), remote.ClaimName(remote.Base(p)))
 	if err := e.c.RawClaim(p, claim); err != nil {
+		slog.Debug("hash repair skipped, file busy", "path", p, "err", err)
 		return
 	}
 	defer e.restore(claim, p)
@@ -127,5 +133,6 @@ func (e *Engine) repairHash(p string, stale hashInfo, staleOK bool, read hashInf
 	if err != nil || nowOK != staleOK || now != stale {
 		return
 	}
-	_ = e.writeHash(p, read)
+	err = e.writeHash(p, read)
+	slog.Info("hash file repaired", "path", p, "err", err)
 }

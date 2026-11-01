@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 
 	"golang.org/x/crypto/ssh"
@@ -25,6 +26,7 @@ func authMethods(cfg Config) ([]ssh.AuthMethod, io.Closer, error) {
 			return nil, nil, err
 		}
 		signers = append(signers, s)
+		slog.Debug("key file loaded", "file", cfg.KeyFile, "type", s.PublicKey().Type(), "fingerprint", ssh.FingerprintSHA256(s.PublicKey()))
 	}
 
 	if cfg.UseAgent {
@@ -35,6 +37,9 @@ func authMethods(cfg Config) ([]ssh.AuthMethod, io.Closer, error) {
 			if err == nil {
 				signers = append(signers, agentSigners...)
 			}
+			slog.Debug("ssh-agent", "keys", len(agentSigners), "err", err)
+		} else {
+			slog.Debug("ssh-agent not available", "err", err)
 		}
 		// A missing agent is not fatal when a key file was given.
 	}

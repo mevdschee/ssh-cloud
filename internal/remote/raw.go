@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"os"
 
 	"github.com/pkg/sftp"
@@ -85,6 +86,8 @@ func (c *Client) RawClaim(from, claim string) error {
 func (c *Client) RenameReplaces() (bool, error) {
 	c.probeOnce.Do(func() {
 		c.replaces, c.probeErr = c.probeRename()
+		_, posix := c.sftp.HasExtension("posix-rename@openssh.com")
+		slog.Info("server rename semantics", "renameReplaces", c.replaces, "posixRename", posix, "err", c.probeErr)
 	})
 	return c.replaces, c.probeErr
 }

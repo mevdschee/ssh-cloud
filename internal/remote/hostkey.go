@@ -3,6 +3,7 @@ package remote
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
@@ -43,12 +44,16 @@ func hostKeyCallback(cfg Config) (ssh.HostKeyCallback, error) {
 		if !errors.As(err, &keyErr) {
 			return err // nil (known and matching) or another error
 		}
+		fp := ssh.FingerprintSHA256(key)
 		if len(keyErr.Want) > 0 {
+			slog.Error("host key mismatch", "host", hostname, "fingerprint", fp, "knownHosts", cfg.KnownHostsFile)
 			return ErrHostKeyMismatch
 		}
 		if cfg.TrustHost == nil || !cfg.TrustHost(hostname, key) {
+			slog.Warn("unknown host not trusted", "host", hostname, "fingerprint", fp)
 			return ErrHostUnknown
 		}
+		slog.Info("host trusted and added to known_hosts", "host", hostname, "fingerprint", fp, "knownHosts", cfg.KnownHostsFile)
 		return appendKnownHost(cfg.KnownHostsFile, hostname, key)
 	}, nil
 }
