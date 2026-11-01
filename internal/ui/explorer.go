@@ -13,6 +13,7 @@ import (
 	"path"
 	"strings"
 	"sync"
+	"unsafe"
 
 	"github.com/mevdschee/ssh-cloud/internal/app"
 	"github.com/mevdschee/ssh-cloud/internal/config"
@@ -47,6 +48,7 @@ type Explorer struct {
 	btnUpload, btnDownload     *ui.Button
 	btnNewFolder, btnRename    *ui.Button
 	btnDelete, btnRefresh      *ui.Button
+	btnTransfers, btnStop      *ui.Button
 	btnConnect                 *ui.Button
 	list                       *ui.ListView
 	status                     *ui.StatusBar
@@ -57,10 +59,14 @@ type Explorer struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	mu      sync.Mutex
-	app     *app.App
-	profile config.Profile
-	busy    bool
+	mu       sync.Mutex
+	app      *app.App
+	profile  config.Profile
+	busy     bool
+	opCancel context.CancelFunc // cancels the running operation
+
+	dragging []remote.Entry // entries being dragged within the list
+	dropIdx  int            // highlighted drop target, or -1
 
 	dir     string   // current namespace
 	back    []string // navigation history
@@ -82,7 +88,8 @@ func (me *Explorer) build() {
 		Title("SSH-Cloud").
 		Size(ui.Dpi(860, 560)).
 		Style(co.WS_CAPTION | co.WS_SYSMENU | co.WS_CLIPCHILDREN | co.WS_BORDER | co.WS_VISIBLE |
-			co.WS_MINIMIZEBOX | co.WS_MAXIMIZEBOX | co.WS_SIZEBOX).
+								co.WS_MINIMIZEBOX | co.WS_MAXIMIZEBOX | co.WS_SIZEBOX).
+		ExStyle(co.WS_EX_LEFT | co.WS_EX_ACCEPTFILES). // files dropped from Windows Explorer
 		Center(true))
 
 	small := func(text string, x int) *ui.Button {
@@ -106,7 +113,9 @@ func (me *Explorer) build() {
 	me.btnNewFolder = action("&New folder", 216, 90)
 	me.btnRename = action("Rena&me", 310, 80)
 	me.btnDelete = action("De&lete", 394, 80)
-	me.btnConnect = ui.NewButton(me.wnd, ui.OptsButton().Text("C&onnection...").Position(ui.Dpi(752, 40)).
+	me.btnTransfers = action("&Transfers", 478, 84)
+	me.btnStop = action("&Stop", 566, 66)
+	me.btnConnect = ui.NewButton(me.wnd, ui.OptsButton().Text("C&onnections...").Position(ui.Dpi(752, 40)).
 		Width(ui.DpiX(100)).Layout(ui.LAY_MOVE_HOLD))
 
 	me.list = ui.NewListView(me.wnd, ui.OptsListView().
@@ -129,7 +138,7 @@ func (me *Explorer) events() {
 	me.wnd.On().WmCreate(func(_ ui.WmCreate) int {
 		me.list.Col(3).SetJustification(co.HDF_RIGHT)
 		me.updateButtons()
-		me.wnd.UiThread(me.promptConnect) // after the window is shown
+		me.wnd.UiThread(me.startup) // after the window is shown
 		return 0
 	})
 	me.wnd.On().WmDestroy(func() {
@@ -152,6 +161,22 @@ func (me *Explorer) events() {
 	me.btnRename.On().BnClicked(me.startRename)
 	me.btnDelete.On().BnClicked(me.delete)
 	me.btnConnect.On().BnClicked(me.promptConnect)
+	me.btnTransfers.On().BnClicked(me.showTransfers)
+	me.btnStop.On().BnClicked(func() {
+		if me.opCancel != nil {
+			slog.Info("operation stopped by user")
+			me.opCancel()
+			me.setStatus("Stopping...")
+		}
+	})
+
+	me.wnd.On().WmDropFiles(func(p ui.WmDropFiles) {
+		files, _ := p.HDrop().DragQueryFile()
+		pt, _ := p.HDrop().DragQueryPoint()
+		p.HDrop().DragFinish()
+		me.dropFiles(files, pt)
+	})
+	me.dragEvents()
 
 	// Enter: the dialog manager sends IDOK. Navigate from the address bar,
 	// open the selection from the list.
@@ -245,6 +270,8 @@ func (me *Explorer) updateButtons() {
 	enable(me.btnRename, connected && sel == 1)
 	enable(me.btnDelete, connected && sel > 0)
 	me.btnConnect.Hwnd().EnableWindow(!me.busy)
+	enable(me.btnTransfers, connected)
+	me.btnStop.Hwnd().EnableWindow(me.busy && me.opCancel != nil)
 	if !connected {
 		setPartText(me.status.Part(1), "")
 	} else if sel > 0 {
@@ -262,21 +289,23 @@ func (me *Explorer) run(status string, work func(ctx context.Context, a *app.App
 	if a == nil || me.busy {
 		return
 	}
-	me.busy = true
+	ctx, cancel := context.WithCancel(me.ctx)
+	me.busy, me.opCancel = true, cancel
 	me.setStatus(status)
 	me.updateButtons()
 	slog.Debug("operation start", "op", status)
 	go func() {
+		defer cancel()
 		err := errors.New("internal error, see the log")
 		func() {
 			defer logging.Recover(status)
-			err = work(me.ctx, a)
+			err = work(ctx, a)
 		}()
 		if err != nil {
 			slog.Error("operation failed", "op", status, "err", err)
 		}
 		me.wnd.UiThread(func() {
-			me.busy = false
+			me.busy, me.opCancel = false, nil
 			if done != nil {
 				done(err)
 			}
@@ -298,19 +327,41 @@ func (me *Explorer) onUI(fn func()) {
 
 // --- connection ---
 
+// startup connects to the last used connection, or opens the manager.
+func (me *Explorer) startup() {
+	if p, ok := me.cfg.Last(); ok {
+		me.connect(p, true)
+		return
+	}
+	me.promptConnect()
+}
+
+// promptConnect opens the connection manager (or, with no saved connections
+// yet, the form for a new one) and connects to the chosen connection.
 func (me *Explorer) promptConnect() {
 	if me.busy {
 		return
 	}
-	p, _ := me.cfg.Profile(me.cfg.LastProfile)
-	p, ok := showConnect(me.wnd, p)
-	if !ok {
+	if len(me.cfg.Profiles) == 0 {
+		p, ok := editProfile(me.wnd, "New connection", config.Profile{UseAgent: true})
+		if !ok {
+			return
+		}
+		p = me.cfg.Put(p)
+		if err := me.cfg.Save(me.cfgDir); err != nil {
+			slog.Error("save settings", "err", err)
+		}
+		me.connect(p, false)
 		return
 	}
-	me.connect(p)
+	if p, ok := showConnections(me.wnd, me.cfg, me.cfgDir); ok {
+		me.connect(p, false)
+	}
 }
 
-func (me *Explorer) connect(p config.Profile) {
+// connect opens a connection. When automatic (at startup) a failure opens
+// the connection manager after the error.
+func (me *Explorer) connect(p config.Profile, automatic bool) {
 	rc := p.RemoteConfig()
 	rc.TrustHost = func(host string, key ssh.PublicKey) bool {
 		trusted := false
@@ -351,6 +402,9 @@ func (me *Explorer) connect(p config.Profile) {
 				me.setStatus("Not connected")
 				me.updateButtons()
 				ui.MsgError(me.wnd, "Connect", "Could not connect to "+p.DisplayName(), err.Error())
+				if automatic {
+					me.promptConnect()
+				}
 				return
 			}
 			me.mu.Lock()
@@ -360,7 +414,7 @@ func (me *Explorer) connect(p config.Profile) {
 			if old != nil {
 				old.Close()
 			}
-			me.cfg.Put(p)
+			me.cfg.SetLast(p.ID)
 			if err := me.cfg.Save(me.cfgDir); err != nil {
 				ui.MsgWarn(me.wnd, "Settings", "Could not save settings", err.Error())
 			}
@@ -600,11 +654,15 @@ func (me *Explorer) upload() {
 	if !me.isConnected() || me.busy {
 		return
 	}
-	files := pickFiles(me.wnd.Hwnd(), "Upload to /"+me.dir)
+	me.uploadFiles(pickFiles(me.wnd.Hwnd(), "Upload to /"+me.dir), me.dir)
+}
+
+// uploadFiles uploads local files and folders into a cloud folder.
+func (me *Explorer) uploadFiles(files []string, dir string) {
 	if len(files) == 0 {
 		return
 	}
-	dir := me.dir
+	slog.Info("upload requested", "files", len(files), "to", dir)
 	var summary app.Summary
 	me.run("Uploading...", func(ctx context.Context, a *app.App) error {
 		summary = a.Upload(ctx, files, dir, me.decide, me.progress)
@@ -674,4 +732,146 @@ func (me *Explorer) overwriteLocal(localPath string) (bool, bool) {
 	})
 	slog.Info("overwrite local decision", "local", localPath, "overwrite", ok)
 	return ok, false
+}
+
+// showTransfers opens the transfer list of the current connection.
+func (me *Explorer) showTransfers() {
+	me.mu.Lock()
+	a, p := me.app, me.profile
+	me.mu.Unlock()
+	if a == nil {
+		return
+	}
+	showTransfers(me.wnd, "Transfers - "+p.DisplayName(), a.Log().Entries())
+}
+
+// --- drag and drop ---
+
+// dropFiles handles files dropped from Windows Explorer: onto a folder in
+// the list they go into that folder, anywhere else into the current folder.
+func (me *Explorer) dropFiles(files []string, ptMain win.POINT) {
+	if !me.isConnected() || len(files) == 0 {
+		return
+	}
+	if me.busy {
+		ui.MsgWarn(me.wnd, "Upload", "Busy", "Wait for the current operation to finish, then drop the files again.")
+		return
+	}
+	target := me.dir
+	pt := ptMain
+	me.wnd.Hwnd().ClientToScreenPt(&pt)
+	me.list.Hwnd().ScreenToClientPt(&pt)
+	if item, ok := me.list.HitTest(pt); ok {
+		if e, ok := item.Data().(remote.Entry); ok && e.IsDir {
+			target = e.Path
+		}
+	}
+	me.uploadFiles(files, target)
+}
+
+// dragEvents implements dragging items onto a folder in the list (a move on
+// the server). The list captures the mouse while dragging.
+func (me *Explorer) dragEvents() {
+	me.dropIdx = -1
+	me.list.On().LvnBeginDrag(func(_ *win.NMLISTVIEW) {
+		if me.busy || !me.isConnected() {
+			return
+		}
+		me.dragging = me.selected()
+		if len(me.dragging) > 0 {
+			me.list.Hwnd().SetCapture()
+		}
+	})
+	sub := me.list.OnSubclass()
+	sub.WmMouseMove(func(p ui.WmMouse) {
+		if me.dragging == nil {
+			return
+		}
+		idx := -1
+		if _, ok := me.dropTarget(p.Pos()); ok {
+			item, _ := me.list.HitTest(p.Pos())
+			idx = item.Index()
+		}
+		me.highlight(idx)
+	})
+	sub.WmLButtonUp(func(p ui.WmMouse) {
+		if me.dragging == nil {
+			return
+		}
+		dragged := me.dragging
+		target, ok := me.dropTarget(p.Pos())
+		me.endDrag()
+		if ok {
+			me.moveInto(dragged, target)
+		}
+	})
+	sub.WmCaptureChanged(func(_ ui.WmCaptureChanged) { me.endDrag() })
+}
+
+// dropTarget returns the folder under a point in list coordinates, if the
+// dragged items may be dropped there.
+func (me *Explorer) dropTarget(pt win.POINT) (remote.Entry, bool) {
+	item, ok := me.list.HitTest(pt)
+	if !ok {
+		return remote.Entry{}, false
+	}
+	target, ok := item.Data().(remote.Entry)
+	if !ok || !target.IsDir {
+		return remote.Entry{}, false
+	}
+	for _, e := range me.dragging {
+		if e.Path == target.Path || strings.HasPrefix(target.Path, e.Path+"/") {
+			return remote.Entry{}, false // onto itself or into its own subfolder
+		}
+	}
+	return target, true
+}
+
+func (me *Explorer) endDrag() {
+	if me.dragging == nil {
+		return
+	}
+	me.dragging = nil // first, so WM_CAPTURECHANGED from the release is a no-op
+	me.highlight(-1)
+	_ = win.ReleaseCapture()
+}
+
+// highlight marks one item as drop target (LVIS_DROPHILITED), -1 for none.
+func (me *Explorer) highlight(idx int) {
+	if idx == me.dropIdx {
+		return
+	}
+	set := func(i int, on bool) {
+		lvi := win.LVITEM{StateMask: co.LVIS_DROPHILITED}
+		if on {
+			lvi.State = co.LVIS_DROPHILITED
+		}
+		me.list.Hwnd().SendMessage(co.LVM_SETITEMSTATE, win.WPARAM(i), win.LPARAM(unsafe.Pointer(&lvi)))
+	}
+	if me.dropIdx >= 0 {
+		set(me.dropIdx, false)
+	}
+	if idx >= 0 {
+		set(idx, true)
+	}
+	me.dropIdx = idx
+}
+
+// moveInto moves entries into a folder on the server.
+func (me *Explorer) moveInto(entries []remote.Entry, target remote.Entry) {
+	slog.Info("move requested", "items", len(entries), "into", target.Path)
+	me.run("Moving into "+target.Name+"...", func(ctx context.Context, a *app.App) error {
+		var errs []error
+		for _, e := range entries {
+			if err := a.Move(ctx, e.Path, remote.Join(target.Path, e.Name)); err != nil {
+				errs = append(errs, err)
+			}
+		}
+		return errors.Join(errs...)
+	}, func(err error) {
+		if err != nil {
+			ui.MsgError(me.wnd, "Move", "Some items could not be moved", err.Error())
+		}
+		me.refresh()
+	})
 }

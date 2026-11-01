@@ -130,8 +130,11 @@ Everything outside `ui` is testable on Linux against a local `sshd`.
 1. Remote layer: connect, list, rename, move, delete.
 2. Transfers: download, atomic upload, transfer list, collision check.
 3. Explorer window with download/upload buttons and the collision prompt.
-4. Drag and drop, Transfers window.
-5. Polish: tree, overlays, server-side copy, shortcuts.
+4. Connection manager (saved connections, auto-connect to the last one),
+   drag in (upload) and drag within (move), Transfers window, stop button.
+5. Drag out to Windows Explorer (COM `IDataObject` with delayed rendering);
+   needs testing on real Windows.
+6. Polish: tree, overlays, server-side copy, shortcuts.
 
 ## Known weaknesses (accepted)
 

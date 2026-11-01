@@ -41,9 +41,9 @@ func okCancel(wnd *ui.Modal, okText string, x, y int) (*ui.Button, *ui.Button) {
 	return ok, cancel
 }
 
-// showConnect asks for the connection profile. It returns false on cancel.
-func showConnect(parent ui.Parent, p config.Profile) (config.Profile, bool) {
-	wnd := ui.NewModal(parent, ui.OptsModal().Title("Connect to SSH-Cloud").Size(ui.Dpi(460, 268)))
+// editProfile shows the form for one connection. It returns false on cancel.
+func editProfile(parent ui.Parent, title string, p config.Profile) (config.Profile, bool) {
+	wnd := ui.NewModal(parent, ui.OptsModal().Title(title).Size(ui.Dpi(460, 268)))
 
 	row := func(i int) int { return 14 + i*32 }
 	label(wnd, "Name", 14, row(0), 110)
@@ -69,7 +69,7 @@ func showConnect(parent ui.Parent, p config.Profile) (config.Profile, bool) {
 	}
 	agent := ui.NewCheckBox(wnd, ui.OptsCheckBox().Text("Use keys from ssh-agent").State(agentState).
 		Position(ui.Dpi(130, row(5)+2)).Size(ui.Dpi(300, 20)))
-	ok, _ := okCancel(wnd, "&Connect", 252, row(6)+4)
+	ok, _ := okCancel(wnd, "&Save", 252, row(6)+4)
 
 	focusOnOpen(wnd, name)
 
@@ -88,6 +88,7 @@ func showConnect(parent ui.Parent, p config.Profile) (config.Profile, bool) {
 			return
 		}
 		result = config.Profile{
+			ID:       p.ID,
 			Name:     strings.TrimSpace(name.Text()),
 			Host:     strings.TrimSpace(host.Text()),
 			Port:     portNum,

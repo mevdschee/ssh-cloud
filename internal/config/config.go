@@ -3,6 +3,8 @@
 package config
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io/fs"
@@ -15,6 +17,9 @@ import (
 
 // Profile is one saved connection.
 type Profile struct {
+	// ID is stable for the life of the profile (the name can change); it
+	// names the profile's transfer list file.
+	ID       string `json:"id"`
 	Name     string `json:"name"`
 	Host     string `json:"host"`
 	Port     int    `json:"port,omitempty"`
@@ -53,6 +58,13 @@ func Load(dir string) (*Config, error) {
 	if err := json.Unmarshal(data, &c); err != nil {
 		return nil, err
 	}
+	for i := range c.Profiles {
+		if c.Profiles[i].ID == "" {
+			// Profiles from before IDs existed keep their transfer list,
+			// which was named after the display name.
+			c.Profiles[i].ID = sanitize(c.Profiles[i].DisplayName())
+		}
+	}
 	return &c, nil
 }
 
@@ -72,27 +84,68 @@ func (c *Config) Save(dir string) error {
 	return os.Rename(tmp, filepath.Join(dir, "config.json"))
 }
 
-// Profile returns the profile with the given name.
-func (c *Config) Profile(name string) (Profile, bool) {
+// Profile returns the profile with the given ID.
+func (c *Config) Profile(id string) (Profile, bool) {
 	for _, p := range c.Profiles {
-		if p.Name == name {
+		if p.ID == id {
 			return p, true
 		}
 	}
 	return Profile{}, false
 }
 
-// Put adds or replaces a profile by name and makes it the last used one.
-func (c *Config) Put(p Profile) {
+// Last returns the last used profile, if any.
+func (c *Config) Last() (Profile, bool) {
+	if p, ok := c.Profile(c.LastProfile); ok {
+		return p, true
+	}
+	// Older configs stored the name.
+	for _, p := range c.Profiles {
+		if p.Name == c.LastProfile {
+			return p, true
+		}
+	}
+	return Profile{}, false
+}
+
+// Put adds a profile or replaces the one with the same ID. A profile without
+// ID gets a new one. It returns the stored profile.
+func (c *Config) Put(p Profile) Profile {
+	if p.ID == "" {
+		p.ID = newID()
+	}
 	for i := range c.Profiles {
-		if c.Profiles[i].Name == p.Name {
+		if c.Profiles[i].ID == p.ID {
 			c.Profiles[i] = p
-			c.LastProfile = p.Name
-			return
+			return p
 		}
 	}
 	c.Profiles = append(c.Profiles, p)
-	c.LastProfile = p.Name
+	return p
+}
+
+// Delete removes a profile by ID.
+func (c *Config) Delete(id string) {
+	for i := range c.Profiles {
+		if c.Profiles[i].ID == id {
+			c.Profiles = append(c.Profiles[:i], c.Profiles[i+1:]...)
+			break
+		}
+	}
+	if c.LastProfile == id {
+		c.LastProfile = ""
+	}
+}
+
+// SetLast remembers the profile to connect to at the next start.
+func (c *Config) SetLast(id string) { c.LastProfile = id }
+
+func newID() string {
+	b := make([]byte, 8)
+	if _, err := rand.Read(b); err != nil {
+		panic(err)
+	}
+	return hex.EncodeToString(b)
 }
 
 // DisplayName is the name shown for a profile: its name, or user@host.
@@ -120,12 +173,19 @@ func (p Profile) RemoteConfig() remote.Config {
 
 // TransferLogFile is the transfer list file of a profile.
 func (p Profile) TransferLogFile(dir string) string {
-	name := strings.Map(func(r rune) rune {
+	id := p.ID
+	if id == "" {
+		id = sanitize(p.DisplayName())
+	}
+	return filepath.Join(dir, "transfers-"+id+".jsonl")
+}
+
+func sanitize(name string) string {
+	return strings.Map(func(r rune) rune {
 		switch {
 		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_', r == '.', r == '@':
 			return r
 		}
 		return '_'
-	}, p.DisplayName())
-	return filepath.Join(dir, "transfers-"+name+".jsonl")
+	}, name)
 }
