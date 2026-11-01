@@ -82,7 +82,7 @@ var (
 		tabSeparator:  0x003A3A3A,
 		dialog:        0x00202020,
 		field:         0x002D2D2D,
-		icon:          color.RGBA{0xff, 0xff, 0xff, 0xff},
+		icon:          color.RGBA{0xe0, 0xe0, 0xe0, 0xff},
 		iconDisabled:  color.RGBA{0x5c, 0x5c, 0x5c, 0xff},
 	}
 )
@@ -238,11 +238,21 @@ func themeFrame(h win.HWND) {
 	if darkMode {
 		v = 1
 	}
-	if uxAllowDarkModeForWindow != 0 {
-		syscall.SyscallN(uxAllowDarkModeForWindow, uintptr(h), uintptr(v))
-	}
+	allowDark(h, darkMode)
 	if r, _, _ := procDwmSetWindowAttr.Call(uintptr(h), uintptr(dwmaUseImmersiveDarkMode), uintptr(unsafe.Pointer(&v)), 4); r != 0 {
 		procDwmSetWindowAttr.Call(uintptr(h), uintptr(dwmaUseImmersiveDarkModeV1), uintptr(unsafe.Pointer(&v)), 4)
+	}
+}
+
+// allowDark lets a window use the dark variants of its theme (and of its
+// menus and scrollbars), where Windows has the export for it.
+func allowDark(h win.HWND, on bool) {
+	if uxAllowDarkModeForWindow != 0 {
+		v := uintptr(0)
+		if on {
+			v = 1
+		}
+		syscall.SyscallN(uxAllowDarkModeForWindow, uintptr(h), v)
 	}
 }
 
@@ -258,8 +268,18 @@ func themeListView(h win.HWND) {
 	header := listHeader(h)
 	bg, _, _ := procGetSysColor.Call(uintptr(co.COLOR_WINDOW))
 	fg, _, _ := procGetSysColor.Call(uintptr(co.COLOR_WINDOWTEXT))
+	allowDark(h, darkMode)
 	if darkMode {
-		setTheme(h, "DarkMode_Explorer", nil)
+		// ItemsView is the theme of Explorer's file list: a grey selection
+		// and normal icons on selected rows (DarkMode_Explorer selects in
+		// blue and tints the icon). Allowed dark, the window gets the dark
+		// variant with dark scrollbars; without that export, ask for the
+		// dark variant by name.
+		if uxAllowDarkModeForWindow != 0 {
+			setTheme(h, "ItemsView", nil)
+		} else {
+			setTheme(h, "DarkMode_ItemsView", nil)
+		}
 		if header != 0 {
 			setTheme(header, "DarkMode_ItemsView", nil)
 		}
