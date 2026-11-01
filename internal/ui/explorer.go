@@ -96,11 +96,14 @@ type Explorer struct {
 	statusGen int                       // ignores stale status results
 	treeSync  bool                      // selecting a tree node from code
 
-	styled     bool // toolbars filled; layout may run
-	contentTop int  // y of the divider above the tree and list
-	treeWidth  int
-	bandHeight int // height of the grey tab band at the top
-	navLineY   int // y of the divider under the navigation row
+	styled        bool // toolbars filled; layout may run
+	contentTop    int  // y of the divider above the tree and list
+	treeWidth     int
+	contentBottom int // bottom of the tree and list (top of the status line)
+	splitDragging bool
+	splitOffset   int // mouse x minus tree width when the drag started
+	bandHeight    int // height of the grey tab band at the top
+	navLineY      int // y of the divider under the navigation row
 
 	sessions []*session // open tabs
 	active   int        // index of the active tab, -1 without tabs
@@ -274,7 +277,7 @@ func (me *Explorer) updateButtons() {
 	cmd(tbDelete, connected && sel > 0)
 	cmd(tbTransfers, connected)
 	enableButton(me.cmdBar, tbStop, me.busy && me.opCancel != nil)
-	enableButton(me.cmdBar, tbUpdate, !me.busy)
+	enableButton(me.cmdBar, tbMore, !me.busy)
 	me.updateTabButtons()
 	switch {
 	case !connected:

@@ -37,6 +37,7 @@ type Config struct {
 	Profiles       []Profile `json:"profiles"`
 	LastProfile    string    `json:"lastProfile,omitempty"`
 	DownloadFolder string    `json:"downloadFolder,omitempty"`
+	TreeWidth      int       `json:"treeWidth,omitempty"` // folder tree width at 96 DPI; 0 is the default
 }
 
 // Dir returns the SSH-Cloud settings directory.

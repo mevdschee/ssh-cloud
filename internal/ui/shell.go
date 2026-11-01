@@ -111,6 +111,12 @@ type menuItem struct {
 
 // popupMenu shows a popup menu at the cursor and returns the chosen id, or 0.
 func popupMenu(owner win.HWND, items []menuItem) uint16 {
+	pos, _ := win.GetCursorPos()
+	return popupMenuAt(owner, items, pos)
+}
+
+// popupMenuAt shows a popup menu at a screen position.
+func popupMenuAt(owner win.HWND, items []menuItem, pos win.POINT) uint16 {
 	hMenu, err := win.CreatePopupMenu()
 	if err != nil {
 		return 0
@@ -137,7 +143,6 @@ func popupMenu(owner win.HWND, items []menuItem) uint16 {
 		}
 		_ = hMenu.InsertMenuItemByPos(i, &mii)
 	}
-	pos, _ := win.GetCursorPos()
 	owner.SetForegroundWindow()
 	id, _ := hMenu.TrackPopupMenu(co.TPM_RETURNCMD|co.TPM_LEFTBUTTON|co.TPM_RIGHTBUTTON, int(pos.X), int(pos.Y), owner)
 	owner.PostMessage(co.WM_NULL, 0, 0)

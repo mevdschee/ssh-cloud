@@ -129,6 +129,7 @@ type tbButton struct {
 	icon     string
 	text     string // label, or tooltip for icon-only buttons
 	showText bool
+	width    int // fixed width for icon-only buttons (0: fit the content)
 }
 
 // toolbarStrings keeps button labels alive for the toolbars.
@@ -172,15 +173,63 @@ func fillRect(hdc uintptr, rc win.RECT, color uint32) {
 	procDeleteObject.Call(brush)
 }
 
-// setupToolbar sets the Fluent image lists for the given icons and the
-// padding inside buttons. Call it once, in WM_CREATE. (TB_SETMETRICS would set
-// the spacing between buttons, but Wine does not implement it.)
-func setupToolbar(tb *ui.Toolbar, icons []string, size, padX, padY int) {
+// setupToolbar sets the Fluent image lists for the given icons, the padding
+// inside buttons and the spacing between them. Call it once, in WM_CREATE.
+func setupToolbar(tb *ui.Toolbar, icons []string, size, padX, padY, spacing int) {
 	h := tb.Hwnd()
 	toolbarIcons[h] = icons
 	h.SendMessage(co.TB_SETIMAGELIST, 0, win.LPARAM(fluentImageList(icons, size, iconColor)))
 	h.SendMessage(co.TB_SETDISABLEDIMAGELIST, 0, win.LPARAM(fluentImageList(icons, size, iconDisabledColor)))
 	h.SendMessage(co.TB_SETPADDING, 0, win.LPARAM(uint32(padX)|uint32(padY)<<16))
+	// Wine does not implement TB_SETMETRICS (it logs an error); there the
+	// buttons simply sit a little closer together.
+	if !isWine() {
+		type tbMetrics struct {
+			size, mask                       uint32
+			cxPad, cyPad, cxBarPad, cyBarPad int32
+			cxButtonSpacing, cyButtonSpacing int32
+		}
+		m := tbMetrics{mask: 0x4, cxButtonSpacing: int32(spacing)} // TBMF_BUTTONSPACING
+		m.size = uint32(unsafe.Sizeof(m))
+		h.SendMessage(co.TB_SETMETRICS, 0, win.LPARAM(unsafe.Pointer(&m)))
+	}
+}
+
+var procWineGetVersion = syscall.NewLazyDLL("ntdll.dll").NewProc("wine_get_version")
+
+// isWine reports whether the program runs under Wine (ntdll exports
+// wine_get_version there, never on Windows).
+func isWine() bool { return procWineGetVersion.Find() == nil }
+
+type tbButtonInfo struct {
+	size, mask uint32
+	idCommand  int32
+	image      int32
+	state      uint8
+	style      uint8
+	cx         uint16
+	lParam     uintptr
+	text       uintptr
+	cchText    int32
+	_          int32
+}
+
+// setButtonWidth sets a button's width (TB_SETBUTTONINFO with TBIF_SIZE).
+func setButtonWidth(tb *ui.Toolbar, id uint16, cx int) {
+	bi := tbButtonInfo{mask: 0x40, cx: uint16(cx)} // TBIF_SIZE
+	bi.size = uint32(unsafe.Sizeof(bi))
+	tb.Hwnd().SendMessage(co.WM_USER+64, win.WPARAM(id), win.LPARAM(unsafe.Pointer(&bi))) // TB_SETBUTTONINFOW
+}
+
+// buttonScreenRect returns a toolbar button's rectangle in screen coordinates.
+func buttonScreenRect(tb *ui.Toolbar, id uint16) win.RECT {
+	var rc win.RECT
+	tb.Hwnd().SendMessage(co.TB_GETRECT, win.WPARAM(id), win.LPARAM(unsafe.Pointer(&rc)))
+	tl := win.POINT{X: rc.Left, Y: rc.Top}
+	br := win.POINT{X: rc.Right, Y: rc.Bottom}
+	tb.Hwnd().ClientToScreenPt(&tl)
+	tb.Hwnd().ClientToScreenPt(&br)
+	return win.RECT{Left: tl.X, Top: tl.Y, Right: br.X, Bottom: br.Y}
 }
 
 // addButtons appends buttons; icons are looked up in the toolbar's icon list.
@@ -194,25 +243,31 @@ func addButtons(tb *ui.Toolbar, buttons []tbButton) {
 		tbb := win.TBBUTTON{FsState: co.TBSTATE_ENABLED}
 		if b.icon == "" {
 			tbb.FsStyle = co.BTNS_SEP
-			tbb.IBitmap = int32(ui.DpiX(8))
+			tbb.IBitmap = int32(ui.DpiX(16))
 		} else {
 			text := syscall.StringToUTF16(b.text)
 			toolbarStrings = append(toolbarStrings, text)
 			tbb.IBitmap = index[b.icon]
 			tbb.IdCommand = int32(b.id)
 			tbb.FsStyle = co.BTNS_AUTOSIZE
+			if b.width > 0 && !b.showText {
+				tbb.FsStyle = 0 // fixed width, set below
+			}
 			if b.showText {
 				tbb.FsStyle |= co.BTNS_SHOWTEXT
 			}
 			tbb.IString = &text[0]
 		}
 		h.SendMessage(co.TB_ADDBUTTONS, 1, win.LPARAM(unsafe.Pointer(&tbb)))
+		if b.icon != "" && b.width > 0 && !b.showText {
+			setButtonWidth(tb, b.id, b.width)
+		}
 	}
 	h.SendMessage(co.TB_AUTOSIZE, 0, 0)
 }
 
 // fillToolbar sets up a toolbar with exactly the icons of its buttons.
-func fillToolbar(tb *ui.Toolbar, buttons []tbButton, size, padX, padY int) {
+func fillToolbar(tb *ui.Toolbar, buttons []tbButton, size, padX, padY, spacing int) {
 	var icons []string
 	seen := map[string]bool{}
 	for _, b := range buttons {
@@ -221,7 +276,7 @@ func fillToolbar(tb *ui.Toolbar, buttons []tbButton, size, padX, padY int) {
 			seen[b.icon] = true
 		}
 	}
-	setupToolbar(tb, icons, size, padX, padY)
+	setupToolbar(tb, icons, size, padX, padY, spacing)
 	addButtons(tb, buttons)
 }
 

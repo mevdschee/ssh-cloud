@@ -28,8 +28,11 @@ const (
 	tbDelete
 	tbTransfers
 	tbStop
-	tbUpdate
+	tbMore // "..." with the overflow menu
 )
+
+// Overflow menu ids.
+const cmdCheckUpdates uint16 = 2201
 
 // maxTabs limits the number of open connections.
 const maxTabs = 32
@@ -70,27 +73,27 @@ func (me *Explorer) styleWindow() {
 	me.tabs.setup(me.fontNormal, me.wnd.Hwnd().GetDpiForWindow())
 	me.rebuildTabs()
 	fillToolbar(me.navBar, []tbButton{
-		{id: tbBack, icon: "arrow_left", text: "Back (Alt+Left)"},
-		{id: tbForward, icon: "arrow_right", text: "Forward (Alt+Right)"},
-		{id: tbUp, icon: "arrow_up", text: "Up (Alt+Up)"},
-		{id: tbRefresh, icon: "arrow_clockwise", text: "Refresh (F5)"},
-	}, size, ui.DpiX(26), ui.DpiY(14))
+		{id: tbBack, icon: "arrow_left", text: "Back (Alt+Left)", width: ui.DpiX(40)},
+		{id: tbForward, icon: "arrow_right", text: "Forward (Alt+Right)", width: ui.DpiX(40)},
+		{id: tbUp, icon: "arrow_up", text: "Up (Alt+Up)", width: ui.DpiX(40)},
+		{id: tbRefresh, icon: "arrow_clockwise", text: "Refresh (F5)", width: ui.DpiX(40)},
+	}, size, ui.DpiX(20), ui.DpiY(14), ui.DpiX(8))
 	fillToolbar(me.cmdBar, []tbButton{
 		{id: tbNewFolder, icon: "folder_add", text: "New folder", showText: true},
 		{},
-		{id: tbCut, icon: "cut", text: "Cut (Ctrl+X)"},
-		{id: tbCopy, icon: "copy", text: "Copy (Ctrl+C)"},
-		{id: tbPaste, icon: "clipboard_paste", text: "Paste (Ctrl+V)"},
-		{id: tbRename, icon: "rename", text: "Rename (F2)"},
-		{id: tbDelete, icon: "delete", text: "Delete (Del)"},
+		{id: tbCut, icon: "cut", text: "Cut (Ctrl+X)", width: ui.DpiX(40)},
+		{id: tbCopy, icon: "copy", text: "Copy (Ctrl+C)", width: ui.DpiX(40)},
+		{id: tbPaste, icon: "clipboard_paste", text: "Paste (Ctrl+V)", width: ui.DpiX(40)},
+		{id: tbRename, icon: "rename", text: "Rename (F2)", width: ui.DpiX(40)},
+		{id: tbDelete, icon: "delete", text: "Delete (Del)", width: ui.DpiX(40)},
 		{},
 		{id: tbUpload, icon: "arrow_upload", text: "Upload", showText: true},
 		{id: tbDownload, icon: "arrow_download", text: "Download", showText: true},
 		{id: tbStop, icon: "stop", text: "Stop", showText: true},
 		{id: tbTransfers, icon: "history", text: "Transfers", showText: true},
 		{},
-		{id: tbUpdate, icon: "arrow_sync", text: "Check for updates"},
-	}, size, ui.DpiX(20), ui.DpiY(14))
+		{id: tbMore, icon: "more_horizontal", text: "See more", width: ui.DpiX(40)},
+	}, size, ui.DpiX(20), ui.DpiY(14), ui.DpiX(8))
 	me.styled = true
 	slog.Debug("window styled", "iconSize", size, "dpi", me.wnd.Hwnd().GetDpiForWindow())
 }
@@ -117,9 +120,10 @@ func (me *Explorer) toolbarEvents() {
 			me.setStatus("Stopping...")
 		}
 	})
-	on(tbUpdate, me.checkForUpdates)
+	on(tbMore, me.moreMenu)
 	me.tabEvents()
 	me.wnd.On().WmPaint(me.paint)
+	me.splitterEvents()
 	invalidateBox := func() {
 		b := me.addrBox
 		procInvalidateRect.Call(uintptr(me.wnd.Hwnd()), uintptr(unsafe.Pointer(&b)), 1)
@@ -188,11 +192,14 @@ func (me *Explorer) layout() {
 	move(me.countText.Hwnd(), cw/2, ch-statusH, cw/2-ui.DpiX(16), statusH)
 
 	top, h := me.contentTop+1, ch-me.contentTop-1-statusH
-	me.treeWidth = ui.DpiX(220)
-	listW := cw - me.treeWidth
+	me.treeWidth = me.treeWidthFor(cw)
+	// The gap between tree and list is the draggable divider; paint() draws
+	// a 1px line in its middle.
+	listX := me.treeWidth + splitterWidth()
+	me.contentBottom = top + h
 	move(me.tree.Hwnd(), 0, top, me.treeWidth, h)
-	move(me.list.Hwnd(), me.treeWidth, top, listW, h)
-	me.fitColumns(listW)
+	move(me.list.Hwnd(), listX, top, cw-listX, h)
+	me.fitColumns(cw - listX)
 	procInvalidateRect.Call(uintptr(me.wnd.Hwnd()), 0, 1)
 }
 
@@ -232,6 +239,8 @@ func (me *Explorer) paint() {
 	for _, y := range []int32{int32(me.navLineY), int32(me.contentTop)} {
 		fillRect(hdc, win.RECT{Top: y, Right: rc.Right, Bottom: y + 1}, dividerColor)
 	}
+	x := int32(me.treeWidth + splitterWidth()/2)
+	fillRect(hdc, win.RECT{Left: x, Top: int32(me.contentTop), Right: x + 1, Bottom: int32(me.contentBottom)}, dividerColor)
 	// Address box: 1px border with rounded corners, white inside, and an
 	// accent underline while the address bar has focus.
 	if b := me.addrBox; b.Right > b.Left {
@@ -241,5 +250,17 @@ func (me *Explorer) paint() {
 		if me.addrFocus {
 			fillRect(hdc, win.RECT{Left: b.Left + radius, Top: b.Bottom - 2, Right: b.Right - radius, Bottom: b.Bottom}, accentColor)
 		}
+	}
+}
+
+// moreMenu shows the overflow ("...") menu below its button.
+func (me *Explorer) moreMenu() {
+	rc := buttonScreenRect(me.cmdBar, tbMore)
+	items := []menuItem{
+		{id: cmdCheckUpdates, text: "Check for &updates", enabled: !me.busy},
+	}
+	switch popupMenuAt(me.wnd.Hwnd(), items, win.POINT{X: rc.Left, Y: rc.Bottom}) {
+	case cmdCheckUpdates:
+		me.checkForUpdates()
 	}
 }

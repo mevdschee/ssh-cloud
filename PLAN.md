@@ -142,17 +142,22 @@ renames temp to `<name> (2).<ext>` (next free number) and writes its hash file.
   content area with thin dividers, and a rounded window with a Mica title bar.
 - Tabs in a grey band below the title bar, one per open connection, each with
   its own folder, history and listing. Drawn like Explorer's (GDI, double
-  buffered): rounded, the active tab white and joined to the row below, a
-  close button on the active and the hovered tab, and a + button. New tab (+, Ctrl+T) opens the connection
+  buffered): 200 px wide (up to 280 px for long names), rounded, the active
+  tab white and joined to the row below, a close button on the active and the
+  hovered tab, and a + button. New tab (+, Ctrl+T) opens the connection
   manager; close with Ctrl+W, a middle-click or the tab's right-click menu;
   Ctrl+Tab switches. Cut/copy and paste work within one connection.
 - Navigation row: Back, Forward, Up, Refresh and the address bar. One command
   bar: New folder | Cut, Copy, Paste, Rename, Delete | Upload, Download, Stop,
-  Transfers | Check for updates. The connection manager opens from the + tab.
+  Transfers | "..." (overflow menu with Check for updates). Icon-only buttons
+  are 40 px wide with 8 px between them, like Explorer (the spacing is skipped
+  under Wine, which lacks TB_SETMETRICS). The connection manager opens from
+  the + tab.
   Thin dividers between rows, a plain status line at the bottom, the app icon
   on the window, and the title is always "SSH-Cloud".
 - Folder tree (loaded as you expand it, kept in step with the list) and a file
-  list with Name, Date modified, Type, Size and Status. Real shell icons and
+  list with Name, Date modified, Type, Size and Status. The divider between
+  them can be dragged (the width is remembered; double-click resets it). Real shell icons and
   type names; click a header to sort (folders first). Hash, claim and temp
   files are hidden.
 - Status column: "Up to date" or "Changed on server" for files this client
@@ -181,7 +186,7 @@ renames temp to `<name> (2).<ext>` (next free number) and writes its hash file.
 
 ## Updates
 
-An update button (sync icon, at the end of the command bar) checks the latest GitHub
+"Check for updates" in the "..." menu at the end of the command bar checks the latest GitHub
 release on request. When it is newer, SSH-Cloud downloads the MSI in the
 progress window, starts `msiexec` and closes. Nothing is checked
 automatically and there is no setting for it. Development builds ("dev")
@@ -244,7 +249,7 @@ server. `ui` is Windows-only and tested by hand.
    from otp4win. First release: v0.1.0.
 9. Explorer polish after the first Windows test: toolbar backgrounds and
    spacing like Windows 11 Explorer, plain status line, window icon, tabs for
-   multiple connections and an update button.
+   multiple connections, and an update check in the "..." menu.
 
 Milestones 1 to 9 are done (1 to 8 were released as v0.1.0). Parts that need the Windows UI (drag out, the toolbars and theme,
 tabs, Pageant, the updater) are only verified by testing on

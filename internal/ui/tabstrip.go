@@ -133,7 +133,7 @@ func (t *tabStrip) measure(hdc uintptr, height int32) {
 	for _, name := range t.names {
 		textW := textWidth(hdc, name)
 		w := pad + textW + int32(ui.DpiX(8)) + int32(ui.DpiX(24)) + int32(ui.DpiX(6))
-		w = max(int32(ui.DpiX(120)), min(w, int32(ui.DpiX(240))))
+		w = max(int32(ui.DpiX(200)), min(w, int32(ui.DpiX(280))))
 		r := win.RECT{Left: x, Top: top, Right: x + w, Bottom: height}
 		cs := int32(ui.DpiX(24))
 		c := win.RECT{Left: r.Right - int32(ui.DpiX(6)) - cs, Top: top + (height-top-cs)/2}
