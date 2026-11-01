@@ -43,7 +43,8 @@ func (e *Engine) send(ctx context.Context, localPath, remotePath string) (hashIn
 func (e *Engine) Download(ctx context.Context, remotePath, localPath string) (Result, error) {
 	p := remote.Clean(remotePath)
 	res, err := e.download(ctx, p, localPath)
-	entry := transferlog.Entry{Direction: transferlog.Download, RemotePath: p, LocalPath: localPath, Size: res.Size, Hash: res.Hash, Result: transferlog.Done}
+	entry := transferlog.Entry{Direction: transferlog.Download, RemotePath: p, LocalPath: localPath, Size: res.Size, Hash: res.Hash, Result: transferlog.Done,
+		DragOut: isDragOut(ctx)}
 	if err != nil {
 		entry.Result, entry.Error, entry.Hash = transferlog.Failed, err.Error(), ""
 		slog.Error("download failed", "remote", p, "local", localPath, "err", err)

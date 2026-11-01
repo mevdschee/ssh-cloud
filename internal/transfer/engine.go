@@ -22,6 +22,8 @@ import (
 	"log/slog"
 	"math/rand/v2"
 	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -51,6 +53,7 @@ const (
 	UnknownVersion   Reason = "version unknown (no hash file)"
 	ChangedOutside   Reason = "changed outside SSH-Cloud"
 	CreatedMeanwhile Reason = "created by someone else during your upload"
+	OtherLocalFile   Reason = "already on the server, last transferred with another local file"
 	MissingMeanwhile Reason = "deleted, moved or being replaced by someone else during your upload"
 )
 
@@ -174,7 +177,7 @@ func (e *Engine) Upload(ctx context.Context, localPath, remotePath string, mode 
 func (e *Engine) upload(ctx context.Context, localPath, p string, mode Mode, local hashInfo) (Result, error) {
 	existed := false // the target existed when the upload started
 	if mode == Check {
-		unchanged, exists, err := e.precheck(ctx, p, local)
+		unchanged, exists, err := e.precheck(ctx, p, local, localPath)
 		if err != nil {
 			return Result{}, err
 		}
@@ -250,7 +253,7 @@ func (e *Engine) compare(p string, size int64) (Reason, *transferlog.Entry, erro
 
 // precheck is the cheap check before any content is sent. It only reads
 // metadata and the hash file.
-func (e *Engine) precheck(ctx context.Context, p string, local hashInfo) (unchanged, exists bool, err error) {
+func (e *Engine) precheck(ctx context.Context, p string, local hashInfo, localPath string) (unchanged, exists bool, err error) {
 	fi, err := e.waitStat(ctx, p)
 	if errors.Is(err, fs.ErrNotExist) {
 		return false, false, nil // new file
@@ -273,7 +276,27 @@ func (e *Engine) precheck(ctx context.Context, p string, local hashInfo) (unchan
 	if reason != "" {
 		return false, true, &ConflictError{Path: p, Reason: reason, ServerSize: fi.Size(), Last: last}
 	}
+	// Nobody changed the file since this client's last transfer. Replace it
+	// without asking only when the upload comes from that same local file
+	// (the drag out, edit, drag back case); another local file with the same
+	// name may well be a different document, so ask.
+	if last != nil && !SameLocalFile(*last, localPath) {
+		return false, true, &ConflictError{Path: p, Reason: OtherLocalFile, ServerSize: fi.Size(), Last: last}
+	}
 	return false, true, nil
+}
+
+// SameLocalFile reports whether localPath is the local file of a transfer:
+// the same path (case-insensitive, as on Windows), or for a drag out, whose
+// recorded path is a temp file, a file with the same name.
+func SameLocalFile(e transferlog.Entry, localPath string) bool {
+	if e.LocalPath == "" || localPath == "" {
+		return false
+	}
+	if strings.EqualFold(filepath.Clean(e.LocalPath), filepath.Clean(localPath)) {
+		return true
+	}
+	return e.DragOut && strings.EqualFold(filepath.Base(e.LocalPath), filepath.Base(localPath))
 }
 
 // stage uploads the local file to a hidden temp file next to the target, or

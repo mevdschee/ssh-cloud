@@ -48,9 +48,6 @@ func (me *Explorer) runWithProgress(title string, work func(ctx context.Context,
 func (me *Explorer) progressDialog(title string, work func(ctx context.Context, progress app.Progress) error) error {
 	ctx, cancel := context.WithCancel(me.ctx)
 	defer cancel()
-	prevCancel := me.opCancel
-	me.opCancel = cancel
-	defer func() { me.opCancel = prevCancel }()
 	slog.Debug("operation start", "op", title)
 
 	wnd := ui.NewModal(me.wnd, ui.OptsModal().Title(title).Size(ui.Dpi(460, 158)))

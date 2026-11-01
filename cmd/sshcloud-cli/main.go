@@ -37,7 +37,7 @@ func main() {
 	flag.StringVar(&cfg.Host, "host", "", "server host name")
 	flag.IntVar(&cfg.Port, "port", 22, "server port")
 	flag.StringVar(&cfg.User, "user", "", "username on the server")
-	flag.StringVar(&cfg.Root, "root", "", "cloud folder on the server (default: home directory)")
+	flag.StringVar(&cfg.Root, "root", "", "remote folder on the server (default: home folder)")
 	flag.StringVar(&cfg.Auth, "auth", remote.AuthAuto, "authentication: auto, keyfile, pageant or password")
 	flag.StringVar(&cfg.KeyFile, "key", "", "private key file (with -auth keyfile)")
 	flag.StringVar(&cfg.KnownHostsFile, "known-hosts", filepath.Join(home, ".ssh", "known_hosts"), "known_hosts file")

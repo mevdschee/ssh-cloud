@@ -25,7 +25,7 @@ func showConnections(parent ui.Parent, cfg *config.Config, cfgDir string) (confi
 		CtrlExStyle(co.LVS_EX_FULLROWSELECT|co.LVS_EX_DOUBLEBUFFER).
 		Column("Name", ui.DpiX(130)).
 		Column("Server", ui.DpiX(150)).
-		Column("Cloud folder", ui.DpiX(140)))
+		Column("Remote folder", ui.DpiX(140)))
 	button := func(text string, y int, id uint16, style co.BS) *ui.Button {
 		return ui.NewButton(wnd, ui.OptsButton().Text(text).Position(ui.Dpi(452, y)).Width(ui.DpiX(96)).
 			CtrlId(id).CtrlStyle(style))

@@ -50,6 +50,10 @@ type Entry struct {
 	Result     Result    `json:"result"`
 	Error      string    `json:"error,omitempty"`
 	From       string    `json:"from,omitempty"` // previous remote path, for moves
+	// DragOut marks a download made by dragging out to Windows Explorer. Its
+	// LocalPath is a temp file, as Explorer does not tell where it put the
+	// copy; a file with the same name counts as that copy.
+	DragOut bool `json:"dragOut,omitempty"`
 }
 
 // known reports whether the entry tells which version is on the server.

@@ -11,6 +11,19 @@ type ByteProgress func(done int64)
 
 type progressKey struct{}
 
+type dragOutKey struct{}
+
+// AsDragOut marks downloads made with this context as drag out to Windows
+// Explorer in the transfer list (see transferlog.Entry.DragOut).
+func AsDragOut(ctx context.Context) context.Context {
+	return context.WithValue(ctx, dragOutKey{}, true)
+}
+
+func isDragOut(ctx context.Context) bool {
+	v, _ := ctx.Value(dragOutKey{}).(bool)
+	return v
+}
+
 // WithProgress returns a context whose transfers report byte progress.
 func WithProgress(ctx context.Context, fn ByteProgress) context.Context {
 	return context.WithValue(ctx, progressKey{}, fn)

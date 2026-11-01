@@ -72,11 +72,10 @@ type Explorer struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	mu       sync.Mutex
-	app      *app.App
-	profile  config.Profile
-	busy     bool
-	opCancel context.CancelFunc // cancels the running operation
+	mu      sync.Mutex
+	app     *app.App
+	profile config.Profile
+	busy    bool
 
 	dragging []remote.Entry // entries being dragged within the list
 	dropIdx  int            // highlighted drop target, or -1
@@ -275,8 +274,6 @@ func (me *Explorer) updateButtons() {
 	cmd(tbPaste, connected && len(me.clip) > 0)
 	cmd(tbRename, connected && sel == 1)
 	cmd(tbDelete, connected && sel > 0)
-	cmd(tbTransfers, connected)
-	enableButton(me.cmdBar, tbStop, me.busy && me.opCancel != nil)
 	enableButton(me.cmdBar, tbMore, !me.busy)
 	me.updateTabButtons()
 	switch {
@@ -298,7 +295,7 @@ func (me *Explorer) run(status string, work func(ctx context.Context, a *app.App
 		return
 	}
 	ctx, cancel := context.WithCancel(me.ctx)
-	me.busy, me.opCancel = true, cancel
+	me.busy = true
 	me.setStatus(status)
 	me.updateButtons()
 	slog.Debug("operation start", "op", status)
@@ -313,7 +310,7 @@ func (me *Explorer) run(status string, work func(ctx context.Context, a *app.App
 			slog.Error("operation failed", "op", status, "err", err)
 		}
 		me.wnd.UiThread(func() {
-			me.busy, me.opCancel = false, nil
+			me.busy = false
 			if done != nil {
 				done(err)
 			}

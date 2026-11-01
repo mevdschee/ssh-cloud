@@ -742,9 +742,10 @@ type FileJob struct {
 }
 
 // DownloadFiles downloads files to exact local paths, reporting progress
-// over all of them (used for drag out, where Explorer chose the names). It
-// stops at the first error.
+// over all of them. It is used for drag out to Windows Explorer, and the
+// transfers are recorded as such. It stops at the first error.
 func (a *App) DownloadFiles(ctx context.Context, jobs []FileJob, progress Progress) error {
+	ctx = transfer.AsDragOut(ctx)
 	var total int64
 	for _, j := range jobs {
 		total += j.Size

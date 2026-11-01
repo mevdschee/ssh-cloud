@@ -562,3 +562,80 @@ func TestExistingTargetMissingAtCommitPrompts(t *testing.T) {
 		t.Fatalf("replace should recreate it: %+v %v", res, err)
 	}
 }
+
+func TestOtherLocalFileWithSameNamePrompts(t *testing.T) {
+	srv := sshtest.Start(t, sshtest.Options{})
+	a := newMachine(t, srv)
+	a.write("report.docx", "v1")
+	if _, err := a.upload("report.docx", "report.docx", Check); err != nil {
+		t.Fatal(err)
+	}
+
+	// The same local file, edited: replaced without a prompt.
+	a.write("report.docx", "v2")
+	if _, err := a.upload("report.docx", "report.docx", Check); err != nil {
+		t.Fatalf("same local file should not prompt: %v", err)
+	}
+
+	// Another local file with the same name: prompt, even though nobody
+	// changed the server version.
+	other := filepath.Join(t.TempDir(), "report.docx")
+	os.WriteFile(other, []byte("something else"), 0o644)
+	_, err := a.e.Upload(bg, other, "report.docx", Check)
+	if r := conflictReason(t, err); r != OtherLocalFile {
+		t.Fatalf("want OtherLocalFile, got %s", r)
+	}
+	if srv.Read("report.docx") != "v2" {
+		t.Fatal("the server version must be untouched")
+	}
+
+	// After choosing Replace, that file is the one remembered.
+	if _, err := a.e.Upload(bg, other, "report.docx", Replace); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(other, []byte("something else, edited"), 0o644)
+	if _, err := a.e.Upload(bg, other, "report.docx", Check); err != nil {
+		t.Fatalf("the replaced-from file is now the remembered one: %v", err)
+	}
+}
+
+func TestDownloadedCopyAndDragOutCountAsSameFile(t *testing.T) {
+	srv := sshtest.Start(t, sshtest.Options{})
+	srv.Write("r.txt", "server")
+	a := newMachine(t, srv)
+
+	// Downloaded to a chosen folder, edited, uploaded from there.
+	a.download("r.txt", "r.txt")
+	a.write("r.txt", "edited")
+	if _, err := a.upload("r.txt", "r.txt", Check); err != nil {
+		t.Fatalf("downloaded copy should not prompt: %v", err)
+	}
+
+	// Dragged out: recorded with a temp path; Explorer put the copy
+	// elsewhere, and a file with the same name comes back.
+	tmp := filepath.Join(t.TempDir(), "drag", "r.txt")
+	if _, err := a.e.Download(AsDragOut(bg), "r.txt", tmp); err != nil {
+		t.Fatal(err)
+	}
+	desktop := filepath.Join(t.TempDir(), "r.txt")
+	os.WriteFile(desktop, []byte("edited on the desktop"), 0o644)
+	if _, err := a.e.Upload(bg, desktop, "r.txt", Check); err != nil {
+		t.Fatalf("a dragged-out copy with the same name should not prompt: %v", err)
+	}
+}
+
+func TestSameLocalFile(t *testing.T) {
+	e := transferlog.Entry{LocalPath: `C:\Users\me\Desktop\Report.docx`}
+	if !SameLocalFile(e, `C:\Users\me\Desktop\report.DOCX`) && filepath.Separator == '\\' {
+		t.Fatal("paths compare case-insensitively")
+	}
+	if SameLocalFile(transferlog.Entry{LocalPath: "/a/report.docx"}, "/b/report.docx") {
+		t.Fatal("another folder is another file")
+	}
+	if !SameLocalFile(transferlog.Entry{LocalPath: "/tmp/drag/1/report.docx", DragOut: true}, "/home/me/report.docx") {
+		t.Fatal("a drag out matches by name")
+	}
+	if SameLocalFile(transferlog.Entry{}, "/a") {
+		t.Fatal("no recorded path never matches")
+	}
+}

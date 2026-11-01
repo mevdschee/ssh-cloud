@@ -26,13 +26,14 @@ const (
 	tbPaste
 	tbRename
 	tbDelete
-	tbTransfers
-	tbStop
 	tbMore // "..." with the overflow menu
 )
 
 // Overflow menu ids.
-const cmdCheckUpdates uint16 = 2201
+const (
+	cmdShowTransfers uint16 = 2201 + iota
+	cmdCheckUpdates
+)
 
 // maxTabs limits the number of open connections.
 const maxTabs = 32
@@ -89,8 +90,6 @@ func (me *Explorer) styleWindow() {
 		{},
 		{id: tbUpload, icon: "arrow_upload", text: "Upload", showText: true},
 		{id: tbDownload, icon: "arrow_download", text: "Download", showText: true},
-		{id: tbStop, icon: "stop", text: "Stop", showText: true},
-		{id: tbTransfers, icon: "history", text: "Transfers", showText: true},
 		{},
 		{id: tbMore, icon: "more_horizontal", text: "See more", width: ui.DpiX(40)},
 	}, size, ui.DpiX(20), ui.DpiY(14), ui.DpiX(8))
@@ -112,14 +111,6 @@ func (me *Explorer) toolbarEvents() {
 	on(tbPaste, me.paste)
 	on(tbRename, me.startRename)
 	on(tbDelete, me.delete)
-	on(tbTransfers, me.showTransfers)
-	on(tbStop, func() {
-		if me.opCancel != nil {
-			slog.Info("operation stopped by user")
-			me.opCancel()
-			me.setStatus("Stopping...")
-		}
-	})
 	on(tbMore, me.moreMenu)
 	me.tabEvents()
 	me.wnd.On().WmPaint(me.paint)
@@ -257,9 +248,13 @@ func (me *Explorer) paint() {
 func (me *Explorer) moreMenu() {
 	rc := buttonScreenRect(me.cmdBar, tbMore)
 	items := []menuItem{
+		{id: cmdShowTransfers, text: "&Transfers", enabled: me.isConnected() && !me.busy},
+		{},
 		{id: cmdCheckUpdates, text: "Check for &updates", enabled: !me.busy},
 	}
 	switch popupMenuAt(me.wnd.Hwnd(), items, win.POINT{X: rc.Left, Y: rc.Bottom}) {
+	case cmdShowTransfers:
+		me.showTransfers()
 	case cmdCheckUpdates:
 		me.checkForUpdates()
 	}

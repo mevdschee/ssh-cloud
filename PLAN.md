@@ -60,6 +60,11 @@ then prompt, which is the safe side.)
    - Otherwise (different hash, no hash file, or never transferred by this
      client): rename the claim back and ask **Replace / Keep both / Skip**
      (option: apply to all).
+   Even when nobody changed the server version, an upload from **another local
+   file** with the same name asks first (checked before sending): only the
+   local file of the last transfer replaces silently. That is the same path,
+   or, for a drag out (recorded with a temp path, as Explorer does not say
+   where it put the copy), a file with the same name.
 5. Record the uploaded hash in the transfer list.
 
 Two rules keep step 3 and step 4 apart (a folder listing is not an atomic
@@ -130,7 +135,8 @@ renames temp to `<name> (2).<ext>` (next free number) and writes its hash file.
 
 - Local, per connection profile, append-only (`%APPDATA%\SSH-Cloud\`).
 - Entry: time, direction, remote path, local path, size, SHA-256, result.
-- Shown in a Transfers window (newest first, including moves and errors).
+- Shown in a Transfers window, opened from the "..." menu (newest first,
+  including moves and errors).
 - Renames and moves made in the app update the paths in the list.
 
 ## Explorer window
@@ -148,11 +154,12 @@ renames temp to `<name> (2).<ext>` (next free number) and writes its hash file.
   manager; close with Ctrl+W, a middle-click or the tab's right-click menu;
   Ctrl+Tab switches. Cut/copy and paste work within one connection.
 - Navigation row: Back, Forward, Up, Refresh and the address bar. One command
-  bar: New folder | Cut, Copy, Paste, Rename, Delete | Upload, Download, Stop,
-  Transfers | "..." (overflow menu with Check for updates). Icon-only buttons
-  are 40 px wide with 8 px between them, like Explorer (the spacing is skipped
-  under Wine, which lacks TB_SETMETRICS). The connection manager opens from
-  the + tab.
+  bar: New folder | Cut, Copy, Paste, Rename, Delete | Upload, Download |
+  "..." (overflow menu with Transfers and Check for updates). Long operations
+  are cancelled in their progress window; there is no separate Stop button.
+  Icon-only buttons are 40 px wide with 8 px between them, like Explorer (the
+  spacing is skipped under Wine, which lacks TB_SETMETRICS). The connection
+  manager opens from the + tab.
   Thin dividers between rows, a plain status line at the bottom, the app icon
   on the window, and the title is always "SSH-Cloud".
 - Folder tree (loaded as you expand it, kept in step with the list) and a file

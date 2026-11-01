@@ -62,7 +62,7 @@ func editProfile(parent ui.Parent, title string, p config.Profile) (config.Profi
 		CtrlStyle(co.ES_AUTOHSCROLL|co.ES_NUMBER))
 	label(wnd, "Username", 14, row(2), 110)
 	user := ui.NewEdit(wnd, ui.OptsEdit().Text(p.User).Position(ui.Dpi(130, row(2))).Width(ui.DpiX(310)))
-	label(wnd, "Cloud folder", 14, row(3), 110)
+	label(wnd, "Remote folder", 14, row(3), 110)
 	root := ui.NewEdit(wnd, ui.OptsEdit().Text(p.Root).Position(ui.Dpi(130, row(3))).Width(ui.DpiX(310)))
 	label(wnd, "Authentication", 14, row(4), 110)
 	methods := []string{remote.AuthAuto, remote.AuthKeyFile, remote.AuthPageant, remote.AuthPassword}
@@ -146,6 +146,13 @@ func showConflict(parent ui.Parent, c *transfer.ConflictError, localPath string)
 		detail = "The version on the server is unknown."
 	case transfer.CreatedMeanwhile:
 		detail = "Someone else created this file while you were uploading."
+	case transfer.OtherLocalFile:
+		detail = "A file with this name already exists on the server."
+		if c.Last != nil && c.Last.LocalPath != "" && !c.Last.DragOut {
+			detail += "\nYou last transferred it with " + c.Last.LocalPath + ", not with " + localPath + "."
+		} else {
+			detail += "\nYou are uploading " + localPath + "."
+		}
 	case transfer.MissingMeanwhile:
 		detail = "The file disappeared from the server during your upload: it was deleted, moved, or someone else is replacing it right now."
 	default:
