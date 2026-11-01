@@ -57,6 +57,24 @@ because none of them is as simple and easy to use and learn.
 
 Any of these projects has more features and a more complicated user interface.
 
+## To do
+
+SSH-Cloud works, but has seen little testing outside of the happy path. Things
+that still need to be tested properly:
+
+- **Many files:** folders with thousands of files and deep folder trees, both
+  for browsing and for copying, moving and deleting.
+- **Large files:** uploads and downloads of several gigabytes, progress
+  reporting, cancelling halfway and running out of disk space on either side.
+- **Failure modes:** the connection dropping during a transfer, the server
+  restarting, permission denied, files locked or open in another application,
+  changed host keys, wrong or expired credentials and slow connections.
+- **Display scaling:** different DPI settings (100%, 125%, 150%, 200%) and
+  moving the window between monitors with different scaling.
+- **SSH servers:** only tested against OpenSSH on Debian 13. Other OpenSSH
+  versions, other distributions, macOS, Windows OpenSSH, Dropbear and SFTP-only
+  hosting (chrooted accounts, NAS devices) still need testing.
+
 ## License
 
 MIT. Icons from
