@@ -29,7 +29,7 @@ for updates" in the "..." menu to get new versions.
 
 ```
 go install github.com/tc-hib/go-winres@latest
-go test ./...            # everything except the window is tested on any OS
+go test ./...            # runs on Linux, except for dragging files out
 ./run.sh                 # build ssh-cloud.exe and run it with Wine
 ./release.sh [minor]     # build the MSI and publish a GitHub release
 ```
