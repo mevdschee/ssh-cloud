@@ -3,7 +3,7 @@
 package ui
 
 // tabStrip draws Explorer-style tabs in a band below the title bar: rounded
-// tabs with a cloud icon and the connection name, the active tab white and
+// tabs with the connection name, the active tab white and
 // joined to the white row below, a close button on the active and the
 // hovered tab, and a + button. It is a small custom control painted with GDI
 // (double buffered).
@@ -50,7 +50,7 @@ type tabStrip struct {
 	plus   win.RECT
 
 	font                uintptr
-	icons               uintptr // image list: cloud, add (at the strip's icon size)
+	icons               uintptr // image list: add (at the strip's icon size)
 	smallIcons          uintptr // image list: dismiss (close button)
 	iconSize, smallSize int
 
@@ -97,7 +97,7 @@ func (t *tabStrip) setup(font uintptr, dpi int) {
 	t.font = font
 	t.iconSize = max(20, 20*dpi/96)
 	t.smallSize = max(16, 16*dpi/96)
-	t.icons = uintptr(fluentImageList([]string{"cloud_16", "add"}, t.iconSize, iconColor))
+	t.icons = uintptr(fluentImageList([]string{"add"}, t.iconSize, iconColor))
 	t.smallIcons = uintptr(fluentImageList([]string{"dismiss_16"}, t.smallSize, iconColor))
 }
 
@@ -121,7 +121,7 @@ func (t *tabStrip) measure(hdc uintptr, height int32) {
 	defer procSelectObject.Call(hdc, old)
 	for _, name := range t.names {
 		textW := textWidth(hdc, name)
-		w := pad + int32(t.smallSize) + int32(ui.DpiX(8)) + textW + int32(ui.DpiX(8)) + int32(ui.DpiX(24)) + int32(ui.DpiX(6))
+		w := pad + textW + int32(ui.DpiX(8)) + int32(ui.DpiX(24)) + int32(ui.DpiX(6))
 		w = max(int32(ui.DpiX(120)), min(w, int32(ui.DpiX(240))))
 		r := win.RECT{Left: x, Top: top, Right: x + w, Bottom: height}
 		cs := int32(ui.DpiX(24))
@@ -202,13 +202,7 @@ func (t *tabStrip) paint() {
 				fillRect(mem, win.RECT{Left: x, Top: r.Top + int32(ui.DpiY(8)), Right: x + 1, Bottom: r.Bottom - int32(ui.DpiY(10))}, tabSeparatorColor)
 			}
 		}
-		pad := int32(ui.DpiX(12))
-		iconY := r.Top + (r.Bottom-r.Top-int32(t.iconSize))/2
-		if !active {
-			iconY -= int32(ui.DpiY(2))
-		}
-		procImageListDraw.Call(t.icons, 0, mem, uintptr(r.Left+pad-int32(t.iconSize-t.smallSize)/2), uintptr(iconY), 1)
-		textL := r.Left + pad + int32(t.smallSize) + int32(ui.DpiX(8))
+		textL := r.Left + int32(ui.DpiX(12))
 		textR := r.Right - int32(ui.DpiX(6))
 		if active || hover {
 			textR = t.closes[i].Left - int32(ui.DpiX(4))
@@ -232,7 +226,7 @@ func (t *tabStrip) paint() {
 		roundRect(mem, t.plus, int32(ui.DpiX(4)), tabHoverColor)
 	}
 	off := (t.plus.Right - t.plus.Left - int32(t.iconSize)) / 2
-	procImageListDraw.Call(t.icons, 1, mem, uintptr(t.plus.Left+off), uintptr(t.plus.Top+off), 1)
+	procImageListDraw.Call(t.icons, 0, mem, uintptr(t.plus.Left+off), uintptr(t.plus.Top+off), 1)
 
 	procBitBlt.Call(hdc, 0, 0, uintptr(rc.Right), uintptr(rc.Bottom), mem, 0, 0, 0x00CC0020) // SRCCOPY
 }

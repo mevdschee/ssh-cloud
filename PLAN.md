@@ -146,9 +146,9 @@ renames temp to `<name> (2).<ext>` (next free number) and writes its hash file.
   close button on the active and the hovered tab, and a + button. New tab (+, Ctrl+T) opens the connection
   manager; close with Ctrl+W, a middle-click or the tab's right-click menu;
   Ctrl+Tab switches. Cut/copy and paste work within one connection.
-- Navigation row: Back, Forward, Up, Refresh and the address bar. Command bar:
-  New folder, Upload, Download, Cut, Copy, Paste, Rename, Delete, Transfers,
-  Stop, and Details and Connections on the right. Thin dividers between rows,
+- Navigation row: Back, Forward, Up, Refresh and the address bar. One command
+  bar: New folder | Cut, Copy, Paste, Rename, Delete | Upload, Download, Stop,
+  Transfers | Details, Check for updates. The connection manager opens from the + tab. Thin dividers between rows,
   a plain status line at the bottom, the app icon on the window.
 - Details pane (toggle with Details or Alt+Shift+P, remembered): large icon,
   name and type of the selection, then size, date modified, status, last

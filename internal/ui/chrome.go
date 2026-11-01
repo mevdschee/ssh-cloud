@@ -28,7 +28,6 @@ const (
 	tbDelete
 	tbTransfers
 	tbStop
-	tbConnections
 	tbDetails
 	tbUpdate
 )
@@ -75,12 +74,9 @@ func (me *Explorer) styleWindow() {
 		{id: tbForward, icon: "arrow_right", text: "Forward (Alt+Right)"},
 		{id: tbUp, icon: "arrow_up", text: "Up (Alt+Up)"},
 		{id: tbRefresh, icon: "arrow_clockwise", text: "Refresh (F5)"},
-	}, size, ui.DpiX(22), ui.DpiY(14))
+	}, size, ui.DpiX(26), ui.DpiY(14))
 	fillToolbar(me.cmdBar, []tbButton{
 		{id: tbNewFolder, icon: "folder_add", text: "New folder", showText: true},
-		{},
-		{id: tbUpload, icon: "arrow_upload", text: "Upload", showText: true},
-		{id: tbDownload, icon: "arrow_download", text: "Download", showText: true},
 		{},
 		{id: tbCut, icon: "cut", text: "Cut (Ctrl+X)"},
 		{id: tbCopy, icon: "copy", text: "Copy (Ctrl+C)"},
@@ -88,35 +84,36 @@ func (me *Explorer) styleWindow() {
 		{id: tbRename, icon: "rename", text: "Rename (F2)"},
 		{id: tbDelete, icon: "delete", text: "Delete (Del)"},
 		{},
-		{id: tbTransfers, icon: "history", text: "Transfers", showText: true},
+		{id: tbUpload, icon: "arrow_upload", text: "Upload", showText: true},
+		{id: tbDownload, icon: "arrow_download", text: "Download", showText: true},
 		{id: tbStop, icon: "stop", text: "Stop", showText: true},
-	}, size, ui.DpiX(16), ui.DpiY(14))
-	fillToolbar(me.connBar, []tbButton{
-		{id: tbUpdate, icon: "arrow_sync", text: "Check for updates"},
+		{id: tbTransfers, icon: "history", text: "Transfers", showText: true},
+		{},
 		{id: tbDetails, icon: "panel_right", text: "Details", showText: true},
-		{id: tbConnections, icon: "plug_connected", text: "Connections", showText: true},
-	}, size, ui.DpiX(16), ui.DpiY(14))
+		{id: tbUpdate, icon: "arrow_sync", text: "Check for updates"},
+	}, size, ui.DpiX(20), ui.DpiY(14))
 	// The details toggle shows its state like Explorer's: pressed when on.
-	setButtonStyle(me.connBar, tbDetails, co.BTNS_AUTOSIZE|co.BTNS_SHOWTEXT|co.BTNS_CHECK)
-	checkButton(me.connBar, tbDetails, me.cfg.ShowDetails)
+	setButtonStyle(me.cmdBar, tbDetails, co.BTNS_AUTOSIZE|co.BTNS_SHOWTEXT|co.BTNS_CHECK)
+	checkButton(me.cmdBar, tbDetails, me.cfg.ShowDetails)
 	me.styled = true
 	slog.Debug("window styled", "iconSize", size, "dpi", me.wnd.Hwnd().GetDpiForWindow())
 }
 
 // setButtonStyle changes a toolbar button's style (TB_SETBUTTONINFO).
+type tbButtonInfo struct {
+	size, mask uint32
+	idCommand  int32
+	image      int32
+	state      uint8
+	style      uint8
+	cx         uint16
+	lParam     uintptr
+	text       uintptr
+	cchText    int32
+	_          int32
+}
+
 func setButtonStyle(tb *ui.Toolbar, id uint16, style co.BTNS) {
-	type tbButtonInfo struct {
-		size, mask uint32
-		idCommand  int32
-		image      int32
-		state      uint8
-		style      uint8
-		cx         uint16
-		lParam     uintptr
-		text       uintptr
-		cchText    int32
-		_          int32
-	}
 	bi := tbButtonInfo{mask: 0x8, style: uint8(style)} // TBIF_STYLE
 	bi.size = uint32(unsafe.Sizeof(bi))
 	tb.Hwnd().SendMessage(co.WM_USER+64, win.WPARAM(id), win.LPARAM(unsafe.Pointer(&bi))) // TB_SETBUTTONINFOW
@@ -144,7 +141,6 @@ func (me *Explorer) toolbarEvents() {
 			me.setStatus("Stopping...")
 		}
 	})
-	on(tbConnections, func() { me.promptConnect(false) })
 	on(tbDetails, me.toggleDetails)
 	on(tbUpdate, me.checkForUpdates)
 	me.tabEvents()
@@ -159,7 +155,7 @@ func (me *Explorer) toolbarEvents() {
 // toggleDetails shows or hides the details pane (Alt+Shift+P).
 func (me *Explorer) toggleDetails() {
 	me.cfg.ShowDetails = !me.cfg.ShowDetails
-	checkButton(me.connBar, tbDetails, me.cfg.ShowDetails)
+	checkButton(me.cmdBar, tbDetails, me.cfg.ShowDetails)
 	if err := me.cfg.Save(me.cfgDir); err != nil {
 		slog.Error("save settings", "err", err)
 	}
@@ -206,10 +202,9 @@ func (me *Explorer) layout() {
 	move(me.address.Hwnd(), addrX, row1Y+(row1H-addrH)/2, cw-addrX-ui.DpiX(12), addrH)
 	me.navLineY = row1Y + row1H + ui.DpiY(6)
 
-	cmd, conn := toolbarSize(me.cmdBar), toolbarSize(me.connBar)
-	row2Y, row2H := me.navLineY+1+ui.DpiY(4), max(int(cmd.Cy), int(conn.Cy))
-	move(me.cmdBar.Hwnd(), m, row2Y, min(int(cmd.Cx), cw-int(conn.Cx)-3*m), int(cmd.Cy))
-	move(me.connBar.Hwnd(), cw-m-int(conn.Cx), row2Y, int(conn.Cx), int(conn.Cy))
+	cmd := toolbarSize(me.cmdBar)
+	row2Y, row2H := me.navLineY+1+ui.DpiY(4), int(cmd.Cy)
+	move(me.cmdBar.Hwnd(), m, row2Y, min(int(cmd.Cx), cw-2*m), int(cmd.Cy))
 	me.contentTop = row2Y + row2H + ui.DpiY(4)
 
 	statusH := ui.DpiY(28)

@@ -57,14 +57,14 @@ const (
 
 // Explorer is the main window.
 type Explorer struct {
-	wnd                     *ui.Main
-	tabs                    *tabStrip   // one tab per open connection
-	navBar, cmdBar, connBar *ui.Toolbar // Fluent icon toolbars
-	address                 *ui.Edit
-	tree                    *ui.TreeView
-	list                    *ui.ListView
-	statusText, countText   *ui.Static // status line at the bottom
-	progressWnd             *ui.Modal  // open progress window, if any
+	wnd                   *ui.Main
+	tabs                  *tabStrip   // one tab per open connection
+	navBar, cmdBar        *ui.Toolbar // Fluent icon toolbars
+	address               *ui.Edit
+	tree                  *ui.TreeView
+	list                  *ui.ListView
+	statusText, countText *ui.Static // status line at the bottom
+	progressWnd           *ui.Modal  // open progress window, if any
 
 	cfgDir  string
 	cfg     *config.Config
@@ -138,7 +138,6 @@ func (me *Explorer) build() {
 	me.navBar = newToolbar(me.wnd, windowColor)
 	me.address = ui.NewEdit(me.wnd, ui.OptsEdit().Position(ui.Dpi(160, 9)).Width(ui.DpiX(600)))
 	me.cmdBar = newToolbar(me.wnd, windowColor)
-	me.connBar = newToolbar(me.wnd, windowColor)
 
 	// The tree and list are borderless and positioned by layout().
 	me.tree = ui.NewTreeView(me.wnd, ui.OptsTreeView().
@@ -274,8 +273,7 @@ func (me *Explorer) updateButtons() {
 	cmd(tbDelete, connected && sel > 0)
 	cmd(tbTransfers, connected)
 	enableButton(me.cmdBar, tbStop, me.busy && me.opCancel != nil)
-	enableButton(me.connBar, tbConnections, !me.busy)
-	enableButton(me.connBar, tbUpdate, !me.busy)
+	enableButton(me.cmdBar, tbUpdate, !me.busy)
 	me.updateTabButtons()
 	switch {
 	case !connected:

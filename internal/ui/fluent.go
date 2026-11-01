@@ -129,7 +129,7 @@ type tbButton struct {
 	icon     string
 	text     string // label, or tooltip for icon-only buttons
 	showText bool
-	check    bool // part of a check group (tabs)
+	check    bool // part of a check group
 }
 
 // toolbarStrings keeps button labels alive for the toolbars.
@@ -173,22 +173,15 @@ func fillRect(hdc uintptr, rc win.RECT, color uint32) {
 	procDeleteObject.Call(brush)
 }
 
-// setupToolbar sets the Fluent image lists for the given icons, the padding
-// inside buttons and the spacing between them. Call it once, in WM_CREATE.
+// setupToolbar sets the Fluent image lists for the given icons and the
+// padding inside buttons. Call it once, in WM_CREATE. (TB_SETMETRICS would set
+// the spacing between buttons, but Wine does not implement it.)
 func setupToolbar(tb *ui.Toolbar, icons []string, size, padX, padY int) {
 	h := tb.Hwnd()
 	toolbarIcons[h] = icons
 	h.SendMessage(co.TB_SETIMAGELIST, 0, win.LPARAM(fluentImageList(icons, size, iconColor)))
 	h.SendMessage(co.TB_SETDISABLEDIMAGELIST, 0, win.LPARAM(fluentImageList(icons, size, iconDisabledColor)))
 	h.SendMessage(co.TB_SETPADDING, 0, win.LPARAM(uint32(padX)|uint32(padY)<<16))
-	type tbMetrics struct {
-		size, mask                       uint32
-		cxPad, cyPad, cxBarPad, cyBarPad int32
-		cxButtonSpacing, cyButtonSpacing int32
-	}
-	m := tbMetrics{mask: 0x4, cxButtonSpacing: int32(ui.DpiX(4))} // TBMF_BUTTONSPACING
-	m.size = uint32(unsafe.Sizeof(m))
-	h.SendMessage(co.TB_SETMETRICS, 0, win.LPARAM(unsafe.Pointer(&m)))
 }
 
 // addButtons appends buttons; icons are looked up in the toolbar's icon list.

@@ -70,7 +70,6 @@ func (me *Explorer) activate(i int) {
 	me.app, me.profile = s.app, s.profile
 	me.mu.Unlock()
 	me.canCopy, me.dir, me.back, me.forward = s.canCopy, s.dir, s.back, s.forward
-	me.wnd.Hwnd().SetWindowText("SSH-Cloud - " + s.profile.DisplayName())
 	me.rebuildTabs()
 	me.resetTree(s.profile.DisplayName())
 	me.show(s.entries)
@@ -141,7 +140,6 @@ func (me *Explorer) closeTab(i int) {
 		me.tree.DeleteAllItems()
 		me.list.DeleteAllItems()
 		me.address.SetText("")
-		me.wnd.Hwnd().SetWindowText("SSH-Cloud")
 		me.setStatus("Not connected")
 		me.rebuildTabs()
 		me.updateButtons()
