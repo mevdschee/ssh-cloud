@@ -33,6 +33,11 @@ func accelerators() win.HACCEL {
 		win.ACCEL{FVirt: v | alt, Key: co.VK_LEFT, Cmd: cmdBack},
 		win.ACCEL{FVirt: v | alt, Key: co.VK_RIGHT, Cmd: cmdForward},
 		win.ACCEL{FVirt: v | alt, Key: co.VK_UP, Cmd: cmdUp},
+		win.ACCEL{FVirt: v | ctrl, Key: co.VK('T'), Cmd: cmdNewTab},
+		win.ACCEL{FVirt: v | ctrl, Key: co.VK('W'), Cmd: cmdCloseTab},
+		win.ACCEL{FVirt: v | ctrl, Key: co.VK_TAB, Cmd: cmdNextTab},
+		win.ACCEL{FVirt: v | ctrl | shift, Key: co.VK_TAB, Cmd: cmdPrevTab},
+		win.ACCEL{FVirt: v | alt | shift, Key: co.VK('P'), Cmd: cmdDetails},
 	)
 	if err != nil {
 		slog.Error("accelerator table", "err", err)
@@ -90,6 +95,11 @@ func (me *Explorer) commandEvents() {
 	on(cmdBack, me.goBack)
 	on(cmdForward, me.goForward)
 	on(cmdUp, me.goUp)
+	on(cmdNewTab, func() { me.promptConnect(true) })
+	on(cmdCloseTab, func() { me.closeTab(me.active) })
+	on(cmdNextTab, func() { me.nextTab(1) })
+	on(cmdPrevTab, func() { me.nextTab(-1) })
+	on(cmdDetails, me.toggleDetails)
 	on(cmdAddress, func() {
 		me.address.Focus()
 		me.address.SetSelection(0, -1)
@@ -136,6 +146,9 @@ func (me *Explorer) toClipboard(cut bool) {
 				"Download the files and upload them again instead.")
 		return
 	}
+	me.mu.Lock()
+	me.clipApp = me.app
+	me.mu.Unlock()
 	me.clip, me.clipCut = sel, cut
 	verb := "Copied"
 	if cut {
@@ -148,6 +161,15 @@ func (me *Explorer) toClipboard(cut bool) {
 // the current folder.
 func (me *Explorer) paste() {
 	if len(me.clip) == 0 || !me.isConnected() || me.busy {
+		return
+	}
+	me.mu.Lock()
+	sameConn := me.clipApp == me.app
+	me.mu.Unlock()
+	if !sameConn {
+		ui.MsgWarn(me.wnd, "Paste", "Different connection",
+			"Cut or copied items can only be pasted within the same connection. "+
+				"Download them and upload them in the other tab instead.")
 		return
 	}
 	items, dir := me.clip, me.dir

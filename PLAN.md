@@ -137,9 +137,18 @@ renames temp to `<name> (2).<ext>` (next free number) and writes its hash file.
   screen's DPI) on flat toolbars, the Explorer theme on the tree and list,
   Segoe UI Variable (falls back to the system font on Windows 10), a white
   content area with thin dividers, and a rounded window with a Mica title bar.
+- Tabs in a grey band at the top, one per open connection, each with its own
+  folder, history and listing. New tab (+, Ctrl+T) opens the connection
+  manager; close with Ctrl+W, a middle-click or the tab's right-click menu;
+  Ctrl+Tab switches. Cut/copy and paste work within one connection.
 - Navigation row: Back, Forward, Up, Refresh and the address bar. Command bar:
   New folder, Upload, Download, Cut, Copy, Paste, Rename, Delete, Transfers,
-  Stop, and Connections on the right.
+  Stop, and Details and Connections on the right. Thin dividers between rows,
+  a plain status line at the bottom, the app icon on the window.
+- Details pane (toggle with Details or Alt+Shift+P, remembered): large icon,
+  name and type of the selection, then size, date modified, status, last
+  transfer, location and permissions; totals for a multiple selection; the
+  current folder when nothing is selected.
 - Folder tree (loaded as you expand it, kept in step with the list) and a file
   list with Name, Date modified, Type, Size and Status. Real shell icons and
   type names; click a header to sort (folders first). Hash, claim and temp
@@ -168,6 +177,14 @@ renames temp to `<name> (2).<ext>` (next free number) and writes its hash file.
   window (current file, bytes, speed, time left, Cancel). Collision prompts
   open on top of it.
 
+## Updates
+
+An update button (sync icon, next to Details) checks the latest GitHub
+release on request. When it is newer, SSH-Cloud downloads the MSI in the
+progress window, starts `msiexec` and closes. Nothing is checked
+automatically and there is no setting for it. Development builds ("dev")
+do not update.
+
 ## Logging
 
 All packages log through `log/slog` to `%APPDATA%\SSH-Cloud\ssh-cloud.log`
@@ -192,6 +209,7 @@ internal/config/       saved connections and settings
 internal/dragdata/     FileGroupDescriptorW bytes for drag out
 internal/icons/        Fluent SVG icons, rasterised at any size and colour
 internal/logging/      log file setup
+internal/update/       GitHub release check and MSI download
 internal/sshtest/      in-process SSH server for tests (OpenSSH rename rules)
 internal/ui/           windigo windows, toolbars, dialogs, drag and drop
 tools/genicon/         renders the app icon (Fluent cloud) into winres/
@@ -220,9 +238,14 @@ server. `ui` is Windows-only and tested by hand.
    on a background goroutine.
 7. Windows 11 look (Fluent icons, toolbars, Explorer theme, font, frame) and
    login methods: automatic, key file, Pageant, password.
+8. Release tooling: app icon, MSI installer (wixl) and `release.sh`, ported
+   from otp4win. First release: v0.1.0.
+9. Explorer polish after the first Windows test: toolbar backgrounds and
+   spacing like Windows 11 Explorer, plain status line, window icon, tabs for
+   multiple connections, the details pane, and an update button.
 
-Milestones 1 to 6 are done; 7 is in progress. Parts that need the Windows UI
-(drag out, the toolbars and theme, Pageant) are only verified by testing on
+Milestones 1 to 9 are done (1 to 8 were released as v0.1.0). Parts that need the Windows UI (drag out, the toolbars and theme,
+tabs, the details pane, Pageant, the updater) are only verified by testing on
 Windows.
 
 ## Known weaknesses (accepted)

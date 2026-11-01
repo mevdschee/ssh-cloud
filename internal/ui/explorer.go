@@ -48,20 +48,27 @@ const (
 	cmdForward
 	cmdUp
 	cmdAddress
+	cmdNewTab
+	cmdCloseTab
+	cmdNextTab
+	cmdPrevTab
+	cmdDetails
 )
 
 // Explorer is the main window.
 type Explorer struct {
 	wnd                     *ui.Main
+	tabBar                  *ui.Toolbar // one button per open connection
 	navBar, cmdBar, connBar *ui.Toolbar // Fluent icon toolbars
 	address                 *ui.Edit
 	tree                    *ui.TreeView
 	list                    *ui.ListView
-	status                  *ui.StatusBar
-	progressWnd             *ui.Modal // open progress window, if any
+	statusText, countText   *ui.Static // status line at the bottom
+	progressWnd             *ui.Modal  // open progress window, if any
 
-	cfgDir string
-	cfg    *config.Config
+	cfgDir  string
+	cfg     *config.Config
+	version string
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -83,6 +90,7 @@ type Explorer struct {
 	canCopy   bool                      // server supports copy-data
 	clip      []remote.Entry            // cut or copied items
 	clipCut   bool                      // clip holds a cut (paste moves)
+	clipApp   *app.App                  // connection the clip belongs to
 	sortCol   int                       // column the list is sorted by
 	sortDesc  bool                      // descending
 	statuses  map[string]app.FileStatus // Status column, by path
@@ -92,11 +100,22 @@ type Explorer struct {
 	styled     bool // toolbars filled; layout may run
 	contentTop int  // y of the divider above the tree and list
 	treeWidth  int
+	bandHeight int // height of the grey tab band at the top
+	navLineY   int // y of the divider under the navigation row
+
+	sessions []*session // open tabs
+	active   int        // index of the active tab, -1 without tabs
+
+	details    win.RECT // the details pane, empty when hidden
+	fontNormal uintptr
+	fontBold   uintptr
+	fontTitle  uintptr
 }
 
-// Run shows the explorer and blocks until it is closed.
-func Run(cfgDir string, cfg *config.Config) int {
-	me := &Explorer{cfgDir: cfgDir, cfg: cfg}
+// Run shows the explorer and blocks until it is closed. version is the
+// release version ("dev" for development builds, which skip update checks).
+func Run(cfgDir string, cfg *config.Config, version string) int {
+	me := &Explorer{cfgDir: cfgDir, cfg: cfg, version: version}
 	me.ctx, me.cancel = context.WithCancel(context.Background())
 	me.build()
 	me.events()
@@ -112,12 +131,14 @@ func (me *Explorer) build() {
 		ExStyle(co.WS_EX_LEFT | co.WS_EX_ACCEPTFILES). // files dropped from Windows Explorer
 		AccelTable(accelerators()).
 		ClassBrush(win.HBRUSH(co.COLOR_WINDOW + 1)). // white, like Windows 11 Explorer
+		ClassIconId(1).                              // the app icon (winres/winres.json)
 		Center(true))
 
-	me.navBar = newToolbar(me.wnd)
+	me.tabBar = newToolbar(me.wnd, bandColor)
+	me.navBar = newToolbar(me.wnd, windowColor)
 	me.address = ui.NewEdit(me.wnd, ui.OptsEdit().Position(ui.Dpi(160, 9)).Width(ui.DpiX(600)))
-	me.cmdBar = newToolbar(me.wnd)
-	me.connBar = newToolbar(me.wnd)
+	me.cmdBar = newToolbar(me.wnd, windowColor)
+	me.connBar = newToolbar(me.wnd, windowColor)
 
 	// The tree and list are borderless and positioned by layout().
 	me.tree = ui.NewTreeView(me.wnd, ui.OptsTreeView().
@@ -139,9 +160,11 @@ func (me *Explorer) build() {
 		Column("Size", ui.DpiX(80)).
 		Column("Status", ui.DpiX(120)))
 
-	me.status = ui.NewStatusBar(me.wnd, ui.OptsStatusBar().
-		FlexPart(1, "Not connected").
-		FixedPart(ui.DpiX(160), ""))
+	me.statusText = ui.NewStatic(me.wnd, ui.OptsStatic().Text("Not connected").
+		Position(ui.Dpi(12, 530)).Size(ui.Dpi(500, 20)).CtrlStyle(co.SS_LEFT|co.SS_NOPREFIX|co.SS_ENDELLIPSIS))
+	me.countText = ui.NewStatic(me.wnd, ui.OptsStatic().Text("").
+		Position(ui.Dpi(600, 530)).Size(ui.Dpi(240, 20)).CtrlStyle(co.SS_RIGHT|co.SS_NOPREFIX))
+	me.active = -1
 }
 
 func (me *Explorer) events() {
@@ -161,11 +184,7 @@ func (me *Explorer) events() {
 	me.wnd.On().WmDestroy(func() {
 		me.cancel()
 		cleanDragTemp()
-		me.mu.Lock()
-		if me.app != nil {
-			me.app.Close()
-		}
-		me.mu.Unlock()
+		me.closeAllSessions()
 	})
 
 	me.wnd.On().WmSize(func(_ ui.WmSize) { me.layout() })
@@ -227,15 +246,12 @@ func (me *Explorer) isConnected() bool {
 	return me.app != nil
 }
 
-func (me *Explorer) setStatus(text string) { setPartText(me.status.Part(0), text) }
+func (me *Explorer) setStatus(text string) { setStaticText(me.statusText, text) }
 
-// setPartText sets a status bar part. Unchanged text is skipped: some
-// implementations (Wine) report SB_SETTEXT failure for it, which windigo turns
-// into a panic. A status bar update is never worth crashing for.
-func setPartText(part ui.StatusBarPart, text string) {
-	defer func() { _ = recover() }()
-	if part.Text() != text {
-		part.SetText(text)
+// setStaticText sets a label's text, skipping unchanged text (no flicker).
+func setStaticText(s *ui.Static, text string) {
+	if s.Text() != text {
+		s.Hwnd().SetWindowText(text)
 	}
 }
 
@@ -259,13 +275,17 @@ func (me *Explorer) updateButtons() {
 	cmd(tbTransfers, connected)
 	enableButton(me.cmdBar, tbStop, me.busy && me.opCancel != nil)
 	enableButton(me.connBar, tbConnections, !me.busy)
-	if !connected {
-		setPartText(me.status.Part(1), "")
-	} else if sel > 0 {
-		setPartText(me.status.Part(1), fmt.Sprintf("%d of %d selected", sel, len(me.entries)))
-	} else {
-		setPartText(me.status.Part(1), fmt.Sprintf("%d items", len(me.entries)))
+	enableButton(me.connBar, tbUpdate, !me.busy)
+	me.updateTabButtons()
+	switch {
+	case !connected:
+		setStaticText(me.countText, "")
+	case sel > 0:
+		setStaticText(me.countText, fmt.Sprintf("%d of %d selected", sel, len(me.entries)))
+	default:
+		setStaticText(me.countText, fmt.Sprintf("%d items", len(me.entries)))
 	}
+	me.invalidateDetails()
 }
 
 // run executes work on a goroutine. done runs on the UI thread afterwards.
@@ -317,15 +337,16 @@ func (me *Explorer) onUI(fn func()) {
 // startup connects to the last used connection, or opens the manager.
 func (me *Explorer) startup() {
 	if p, ok := me.cfg.Last(); ok {
-		me.connect(p, true)
+		me.connect(p, true, true)
 		return
 	}
-	me.promptConnect()
+	me.promptConnect(true)
 }
 
 // promptConnect opens the connection manager (or, with no saved connections
-// yet, the form for a new one) and connects to the chosen connection.
-func (me *Explorer) promptConnect() {
+// yet, the form for a new one) and connects to the chosen connection, in a
+// new tab or in place of the active tab's connection.
+func (me *Explorer) promptConnect(newTab bool) {
 	if me.busy {
 		return
 	}
@@ -338,17 +359,17 @@ func (me *Explorer) promptConnect() {
 		if err := me.cfg.Save(me.cfgDir); err != nil {
 			slog.Error("save settings", "err", err)
 		}
-		me.connect(p, false)
+		me.connect(p, false, newTab)
 		return
 	}
 	if p, ok := showConnections(me.wnd, me.cfg, me.cfgDir); ok {
-		me.connect(p, false)
+		me.connect(p, false, newTab)
 	}
 }
 
 // connect opens a connection. When automatic (at startup) a failure opens
 // the connection manager after the error.
-func (me *Explorer) connect(p config.Profile, automatic bool) {
+func (me *Explorer) connect(p config.Profile, automatic, newTab bool) {
 	rc := p.RemoteConfig()
 	rc.TrustHost = func(host string, key ssh.PublicKey) bool {
 		trusted := false
@@ -400,27 +421,16 @@ func (me *Explorer) connect(p config.Profile, automatic bool) {
 				me.updateButtons()
 				ui.MsgError(me.wnd, "Connect", "Could not connect to "+p.DisplayName(), err.Error())
 				if automatic {
-					me.promptConnect()
+					me.promptConnect(true)
 				}
 				return
-			}
-			me.mu.Lock()
-			old := me.app
-			me.app, me.profile = a, p
-			me.mu.Unlock()
-			if old != nil {
-				old.Close()
 			}
 			me.cfg.SetLast(p.ID)
 			if err := me.cfg.Save(me.cfgDir); err != nil {
 				ui.MsgWarn(me.wnd, "Settings", "Could not save settings", err.Error())
 			}
-			me.wnd.Hwnd().SetWindowText("SSH-Cloud - " + p.DisplayName())
-			me.dir, me.back, me.forward = "", nil, nil
-			me.canCopy, me.clip = canCopy, nil
 			slog.Info("server-side copy", "available", canCopy)
-			me.resetTree(p.DisplayName())
-			me.navigate("", false)
+			me.openSession(p, a, canCopy, newTab)
 		})
 	}()
 }
@@ -545,6 +555,7 @@ func (me *Explorer) loadStatuses() {
 					item.SetText(4, statusText(st[e.Path]))
 				}
 			}
+			me.invalidateDetails()
 		})
 	}()
 }

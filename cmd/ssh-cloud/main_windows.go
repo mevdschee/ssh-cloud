@@ -61,7 +61,7 @@ func main() {
 		wui.MsgError(nil, "SSH-Cloud", "Could not read settings", err.Error())
 		cfg = &config.Config{}
 	}
-	code := ui.Run(dir, cfg)
+	code := ui.Run(dir, cfg, version)
 	slog.Info("exit", "code", code)
 	os.Exit(code)
 }

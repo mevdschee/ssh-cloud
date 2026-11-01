@@ -129,36 +129,66 @@ type tbButton struct {
 	icon     string
 	text     string // label, or tooltip for icon-only buttons
 	showText bool
+	check    bool // part of a check group (tabs)
 }
 
 // toolbarStrings keeps button labels alive for the toolbars.
 var toolbarStrings [][]uint16
 
-// newToolbar creates a flat, transparent toolbar that does not position
-// itself (it is placed by the window's layout code).
-func newToolbar(parent ui.Parent) *ui.Toolbar {
-	return ui.NewToolbar(parent, ui.OptsToolbar().
-		CtrlStyle(co.TBSTYLE_FLAT|co.TBSTYLE_LIST|co.TBSTYLE_TRANSPARENT|co.TBSTYLE_TOOLTIPS).
+// toolbarIcons remembers the image list order of each toolbar's icons.
+var toolbarIcons = map[win.HWND][]string{}
+
+// newToolbar creates a flat toolbar that paints its background in bg (a
+// COLORREF) instead of the grey of the classic toolbar, and does not position
+// itself (the window's layout code places it).
+func newToolbar(parent ui.Parent, bg uint32) *ui.Toolbar {
+	tb := ui.NewToolbar(parent, ui.OptsToolbar().
+		CtrlStyle(co.TBSTYLE_FLAT|co.TBSTYLE_LIST|co.TBSTYLE_TOOLTIPS).
 		CtrlExStyle(co.TBSTYLE_EX_MIXEDBUTTONS|co.TBSTYLE_EX_DOUBLEBUFFER).
 		WndStyle(co.WS_CHILD|co.WS_VISIBLE|co.WS(ccsNoResize|ccsNoParentAlign|ccsNoDivider)))
+	tb.OnSubclass().WmEraseBkgnd(func(p ui.WmEraseBkgnd) int {
+		rc, err := tb.Hwnd().GetClientRect()
+		if err != nil {
+			return 0
+		}
+		fillRect(uintptr(p.Hdc()), rc, bg)
+		return 1
+	})
+	return tb
 }
 
-// fillToolbar sets the Fluent image lists and adds the buttons. Call it
-// after the toolbar exists (in WM_CREATE).
-func fillToolbar(tb *ui.Toolbar, buttons []tbButton, size int) {
-	var names []string
-	for _, b := range buttons {
-		if b.icon != "" {
-			names = append(names, b.icon)
-		}
-	}
-	h := tb.Hwnd()
-	h.SendMessage(co.TB_SETIMAGELIST, 0, win.LPARAM(fluentImageList(names, size, iconColor)))
-	h.SendMessage(co.TB_SETDISABLEDIMAGELIST, 0, win.LPARAM(fluentImageList(names, size, iconDisabledColor)))
-	pad := ui.DpiX(10)
-	h.SendMessage(co.TB_SETPADDING, 0, win.LPARAM(uint32(pad)|uint32(pad)<<16))
+// fillRect fills a rectangle with a solid COLORREF.
+func fillRect(hdc uintptr, rc win.RECT, color uint32) {
+	brush, _, _ := procCreateSolidBrush.Call(uintptr(color))
+	procFillRect.Call(hdc, uintptr(unsafe.Pointer(&rc)), brush)
+	procDeleteObject.Call(brush)
+}
 
-	idx := int32(0)
+// setupToolbar sets the Fluent image lists for the given icons, the padding
+// inside buttons and the spacing between them. Call it once, in WM_CREATE.
+func setupToolbar(tb *ui.Toolbar, icons []string, size, padX, padY int) {
+	h := tb.Hwnd()
+	toolbarIcons[h] = icons
+	h.SendMessage(co.TB_SETIMAGELIST, 0, win.LPARAM(fluentImageList(icons, size, iconColor)))
+	h.SendMessage(co.TB_SETDISABLEDIMAGELIST, 0, win.LPARAM(fluentImageList(icons, size, iconDisabledColor)))
+	h.SendMessage(co.TB_SETPADDING, 0, win.LPARAM(uint32(padX)|uint32(padY)<<16))
+	type tbMetrics struct {
+		size, mask                       uint32
+		cxPad, cyPad, cxBarPad, cyBarPad int32
+		cxButtonSpacing, cyButtonSpacing int32
+	}
+	m := tbMetrics{mask: 0x4, cxButtonSpacing: int32(ui.DpiX(4))} // TBMF_BUTTONSPACING
+	m.size = uint32(unsafe.Sizeof(m))
+	h.SendMessage(co.TB_SETMETRICS, 0, win.LPARAM(unsafe.Pointer(&m)))
+}
+
+// addButtons appends buttons; icons are looked up in the toolbar's icon list.
+func addButtons(tb *ui.Toolbar, buttons []tbButton) {
+	h := tb.Hwnd()
+	index := map[string]int32{}
+	for i, name := range toolbarIcons[h] {
+		index[name] = int32(i)
+	}
 	for _, b := range buttons {
 		tbb := win.TBBUTTON{FsState: co.TBSTATE_ENABLED}
 		if b.icon == "" {
@@ -167,18 +197,53 @@ func fillToolbar(tb *ui.Toolbar, buttons []tbButton, size int) {
 		} else {
 			text := syscall.StringToUTF16(b.text)
 			toolbarStrings = append(toolbarStrings, text)
-			tbb.IBitmap = idx
+			tbb.IBitmap = index[b.icon]
 			tbb.IdCommand = int32(b.id)
 			tbb.FsStyle = co.BTNS_AUTOSIZE
 			if b.showText {
 				tbb.FsStyle |= co.BTNS_SHOWTEXT
 			}
+			if b.check {
+				tbb.FsStyle |= co.BTNS_CHECKGROUP
+			}
 			tbb.IString = &text[0]
-			idx++
 		}
 		h.SendMessage(co.TB_ADDBUTTONS, 1, win.LPARAM(unsafe.Pointer(&tbb)))
 	}
 	h.SendMessage(co.TB_AUTOSIZE, 0, 0)
+}
+
+// removeButtons deletes all buttons of a toolbar.
+func removeButtons(tb *ui.Toolbar) {
+	for {
+		n, _ := tb.Hwnd().SendMessage(co.TB_BUTTONCOUNT, 0, 0)
+		if n == 0 {
+			return
+		}
+		tb.Hwnd().SendMessage(co.TB_DELETEBUTTON, 0, 0)
+	}
+}
+
+// fillToolbar sets up a toolbar with exactly the icons of its buttons.
+func fillToolbar(tb *ui.Toolbar, buttons []tbButton, size, padX, padY int) {
+	var icons []string
+	seen := map[string]bool{}
+	for _, b := range buttons {
+		if b.icon != "" && !seen[b.icon] {
+			icons = append(icons, b.icon)
+			seen[b.icon] = true
+		}
+	}
+	setupToolbar(tb, icons, size, padX, padY)
+	addButtons(tb, buttons)
+}
+
+func checkButton(tb *ui.Toolbar, id uint16, on bool) {
+	v := 0
+	if on {
+		v = 1
+	}
+	tb.Hwnd().SendMessage(co.TB_CHECKBUTTON, win.WPARAM(id), win.LPARAM(v))
 }
 
 // toolbarSize returns the size a toolbar needs for all its buttons.
@@ -232,27 +297,39 @@ type nonClientMetrics struct {
 	paddedBorderWidth                      int32
 }
 
-// uiFont returns the Windows 11 UI font (Segoe UI Variable Text) at the size
-// of the system message font, or the system message font itself when the
-// variable font is not installed (Windows 10).
-func uiFont() uintptr {
+// uiFonts returns the Windows 11 UI font (Segoe UI Variable Text, or the
+// system message font when it is not installed, as on Windows 10) in three
+// variants: normal, semibold, and a larger semibold for titles.
+func uiFonts() (normal, bold, title uintptr) {
 	var ncm nonClientMetrics
 	ncm.size = uint32(unsafe.Sizeof(ncm))
 	if r, _, _ := procSystemParametersInfo.Call(spiNonClientMetrics, uintptr(ncm.size), uintptr(unsafe.Pointer(&ncm)), 0); r == 0 {
-		return 0
+		return 0, 0, 0
 	}
 	lf := ncm.messageFont
 	const face = "Segoe UI Variable Text"
-	copy(lf.faceName[:], syscall.StringToUTF16(face))
-	hFont, _, _ := procCreateFontIndirectW.Call(uintptr(unsafe.Pointer(&lf)))
-	if hFont != 0 && fontFace(hFont) == face {
-		return hFont
+	try := lf
+	try.faceName = [32]uint16{}
+	copy(try.faceName[:], syscall.StringToUTF16(face))
+	h, _, _ := procCreateFontIndirectW.Call(uintptr(unsafe.Pointer(&try)))
+	if h != 0 && fontFace(h) == face {
+		lf = try
 	}
-	if hFont != 0 {
-		procDeleteObject.Call(hFont)
+	if h != 0 {
+		procDeleteObject.Call(h)
 	}
-	hFont, _, _ = procCreateFontIndirectW.Call(uintptr(unsafe.Pointer(&ncm.messageFont)))
-	return hFont
+	create := func(f logFont) uintptr {
+		h, _, _ := procCreateFontIndirectW.Call(uintptr(unsafe.Pointer(&f)))
+		return h
+	}
+	normal = create(lf)
+	b := lf
+	b.weight = 600
+	bold = create(b)
+	t := b
+	t.height = lf.height * 3 / 2
+	title = create(t)
+	return normal, bold, title
 }
 
 // fontFace returns the face name GDI actually picked for a font.

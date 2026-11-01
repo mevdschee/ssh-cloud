@@ -37,6 +37,7 @@ type Config struct {
 	Profiles       []Profile `json:"profiles"`
 	LastProfile    string    `json:"lastProfile,omitempty"`
 	DownloadFolder string    `json:"downloadFolder,omitempty"`
+	ShowDetails    bool      `json:"showDetails,omitempty"`
 }
 
 // Dir returns the SSH-Cloud settings directory.
