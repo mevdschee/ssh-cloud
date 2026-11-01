@@ -39,7 +39,7 @@ type Client struct {
 // Dial connects, authenticates with a public key, verifies the host key and
 // opens the SFTP session. The cloud root must exist and be a directory.
 func Dial(ctx context.Context, cfg Config) (c *Client, err error) {
-	slog.Info("dial", "addr", cfg.addr(), "user", cfg.User, "root", cfg.Root, "keyFile", cfg.KeyFile, "agent", cfg.UseAgent)
+	slog.Info("dial", "addr", cfg.addr(), "user", cfg.User, "root", cfg.Root, "auth", cfg.Auth, "keyFile", cfg.KeyFile)
 	defer func() {
 		if err != nil {
 			slog.Error("dial failed", "addr", cfg.addr(), "err", err)

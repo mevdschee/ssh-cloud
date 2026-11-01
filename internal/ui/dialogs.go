@@ -9,6 +9,7 @@ import (
 
 	"github.com/mevdschee/ssh-cloud/internal/app"
 	"github.com/mevdschee/ssh-cloud/internal/config"
+	"github.com/mevdschee/ssh-cloud/internal/remote"
 	"github.com/mevdschee/ssh-cloud/internal/transfer"
 	"github.com/rodrigocfd/windigo/co"
 	"github.com/rodrigocfd/windigo/ui"
@@ -18,8 +19,11 @@ func closeModal(wnd *ui.Modal) { wnd.Hwnd().SendMessage(co.WM_CLOSE, 0, 0) }
 
 // focusOnOpen puts the keyboard focus in an edit when the dialog opens, with
 // its text selected so typing replaces it.
-func focusOnOpen(wnd *ui.Modal, edit *ui.Edit) {
+func focusOnOpen(wnd *ui.Modal, edit *ui.Edit, init ...func()) {
 	wnd.On().WmCreate(func(_ ui.WmCreate) int {
+		for _, fn := range init {
+			fn()
+		}
 		wnd.UiThread(func() {
 			edit.Focus()
 			edit.SetSelection(0, -1)
@@ -60,18 +64,29 @@ func editProfile(parent ui.Parent, title string, p config.Profile) (config.Profi
 	user := ui.NewEdit(wnd, ui.OptsEdit().Text(p.User).Position(ui.Dpi(130, row(2))).Width(ui.DpiX(310)))
 	label(wnd, "Cloud folder", 14, row(3), 110)
 	root := ui.NewEdit(wnd, ui.OptsEdit().Text(p.Root).Position(ui.Dpi(130, row(3))).Width(ui.DpiX(310)))
-	label(wnd, "Private key", 14, row(4), 110)
-	key := ui.NewEdit(wnd, ui.OptsEdit().Text(p.KeyFile).Position(ui.Dpi(130, row(4))).Width(ui.DpiX(240)))
-	browse := ui.NewButton(wnd, ui.OptsButton().Text("&Browse...").Position(ui.Dpi(378, row(4)-1)).Width(ui.DpiX(64)))
-	agentState := co.BST_UNCHECKED
-	if p.UseAgent || p.KeyFile == "" {
-		agentState = co.BST_CHECKED
+	label(wnd, "Authentication", 14, row(4), 110)
+	methods := []string{remote.AuthAuto, remote.AuthKeyFile, remote.AuthPageant, remote.AuthPassword}
+	selected := 0
+	for i, m := range methods {
+		if m == p.Auth {
+			selected = i
+		}
 	}
-	agent := ui.NewCheckBox(wnd, ui.OptsCheckBox().Text("Use keys from ssh-agent").State(agentState).
-		Position(ui.Dpi(130, row(5)+2)).Size(ui.Dpi(300, 20)))
+	auth := ui.NewComboBox(wnd, ui.OptsComboBox().Position(ui.Dpi(130, row(4))).Width(ui.DpiX(310)).
+		Texts("Automatic (agent, Pageant, default keys, password)", "Key file", "Pageant", "Password").
+		Select(selected))
+	label(wnd, "Key file", 14, row(5), 110)
+	key := ui.NewEdit(wnd, ui.OptsEdit().Text(p.KeyFile).Position(ui.Dpi(130, row(5))).Width(ui.DpiX(240)))
+	browse := ui.NewButton(wnd, ui.OptsButton().Text("&Browse...").Position(ui.Dpi(378, row(5)-1)).Width(ui.DpiX(64)))
 	ok, _ := okCancel(wnd, "&Save", 252, row(6)+4)
 
-	focusOnOpen(wnd, name)
+	updateKey := func() {
+		isKeyFile := methods[max(auth.SelectedIndex(), 0)] == remote.AuthKeyFile
+		key.Hwnd().EnableWindow(isKeyFile)
+		browse.Hwnd().EnableWindow(isKeyFile)
+	}
+	auth.On().CbnSelChange(updateKey)
+	focusOnOpen(wnd, name, updateKey)
 
 	browse.On().BnClicked(func() {
 		if f, chosen := pickKeyFile(wnd.Hwnd()); chosen {
@@ -88,21 +103,21 @@ func editProfile(parent ui.Parent, title string, p config.Profile) (config.Profi
 			return
 		}
 		result = config.Profile{
-			ID:       p.ID,
-			Name:     strings.TrimSpace(name.Text()),
-			Host:     strings.TrimSpace(host.Text()),
-			Port:     portNum,
-			User:     strings.TrimSpace(user.Text()),
-			Root:     strings.TrimSpace(root.Text()),
-			KeyFile:  strings.TrimSpace(key.Text()),
-			UseAgent: agent.IsChecked(),
+			ID:      p.ID,
+			Name:    strings.TrimSpace(name.Text()),
+			Host:    strings.TrimSpace(host.Text()),
+			Port:    portNum,
+			User:    strings.TrimSpace(user.Text()),
+			Root:    strings.TrimSpace(root.Text()),
+			Auth:    methods[max(auth.SelectedIndex(), 0)],
+			KeyFile: strings.TrimSpace(key.Text()),
 		}
 		if result.Host == "" || result.User == "" {
 			ui.MsgError(wnd, "Connect", "Missing fields", "Host and username are required.")
 			return
 		}
-		if result.KeyFile == "" && !result.UseAgent {
-			ui.MsgError(wnd, "Connect", "No key", "Choose a private key or use the ssh-agent.")
+		if result.Auth == remote.AuthKeyFile && result.KeyFile == "" {
+			ui.MsgError(wnd, "Connect", "No key file", "Choose a private key file, or another authentication method.")
 			return
 		}
 		if result.Name == "" {

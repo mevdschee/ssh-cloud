@@ -7,6 +7,7 @@ import (
 	"log/slog"
 
 	"github.com/mevdschee/ssh-cloud/internal/config"
+	"github.com/mevdschee/ssh-cloud/internal/remote"
 	"github.com/rodrigocfd/windigo/co"
 	"github.com/rodrigocfd/windigo/ui"
 	"github.com/rodrigocfd/windigo/win"
@@ -110,7 +111,7 @@ func showConnections(parent ui.Parent, cfg *config.Config, cfgDir string) (confi
 	btnConnect.On().BnClicked(doConnect)
 	btnEdit.On().BnClicked(doEdit)
 	btnNew.On().BnClicked(func() {
-		if p, ok := editProfile(wnd, "New connection", config.Profile{UseAgent: true}); ok {
+		if p, ok := editProfile(wnd, "New connection", config.Profile{Auth: remote.AuthAuto}); ok {
 			p = cfg.Put(p)
 			save()
 			fill(p.ID)

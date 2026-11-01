@@ -52,19 +52,13 @@ const (
 
 // Explorer is the main window.
 type Explorer struct {
-	wnd                        *ui.Main
-	btnBack, btnForward, btnUp *ui.Button
-	address                    *ui.Edit
-	btnGo                      *ui.Button
-	btnUpload, btnDownload     *ui.Button
-	btnNewFolder, btnRename    *ui.Button
-	btnDelete, btnRefresh      *ui.Button
-	btnTransfers, btnStop      *ui.Button
-	btnConnect                 *ui.Button
-	tree                       *ui.TreeView
-	list                       *ui.ListView
-	status                     *ui.StatusBar
-	progressWnd                *ui.Modal // open progress window, if any
+	wnd                     *ui.Main
+	navBar, cmdBar, connBar *ui.Toolbar // Fluent icon toolbars
+	address                 *ui.Edit
+	tree                    *ui.TreeView
+	list                    *ui.ListView
+	status                  *ui.StatusBar
+	progressWnd             *ui.Modal // open progress window, if any
 
 	cfgDir string
 	cfg    *config.Config
@@ -94,6 +88,10 @@ type Explorer struct {
 	statuses  map[string]app.FileStatus // Status column, by path
 	statusGen int                       // ignores stale status results
 	treeSync  bool                      // selecting a tree node from code
+
+	styled     bool // toolbars filled; layout may run
+	contentTop int  // y of the divider above the tree and list
+	treeWidth  int
 }
 
 // Run shows the explorer and blocks until it is closed.
@@ -113,47 +111,28 @@ func (me *Explorer) build() {
 								co.WS_MINIMIZEBOX | co.WS_MAXIMIZEBOX | co.WS_SIZEBOX).
 		ExStyle(co.WS_EX_LEFT | co.WS_EX_ACCEPTFILES). // files dropped from Windows Explorer
 		AccelTable(accelerators()).
+		ClassBrush(win.HBRUSH(co.COLOR_WINDOW + 1)). // white, like Windows 11 Explorer
 		Center(true))
 
-	small := func(text string, x int) *ui.Button {
-		return ui.NewButton(me.wnd, ui.OptsButton().Text(text).Position(ui.Dpi(x, 8)).Width(ui.DpiX(32)))
-	}
-	me.btnBack = small("<", 8)
-	me.btnForward = small(">", 42)
-	me.btnUp = small("^", 76)
-	me.address = ui.NewEdit(me.wnd, ui.OptsEdit().Position(ui.Dpi(116, 9)).Width(ui.DpiX(610)).
-		Layout(ui.LAY_RESIZE_HOLD))
-	me.btnGo = ui.NewButton(me.wnd, ui.OptsButton().Text("Go").Position(ui.Dpi(732, 8)).Width(ui.DpiX(50)).
-		Layout(ui.LAY_MOVE_HOLD))
-	me.btnRefresh = ui.NewButton(me.wnd, ui.OptsButton().Text("Refresh").Position(ui.Dpi(786, 8)).Width(ui.DpiX(66)).
-		Layout(ui.LAY_MOVE_HOLD))
+	me.navBar = newToolbar(me.wnd)
+	me.address = ui.NewEdit(me.wnd, ui.OptsEdit().Position(ui.Dpi(160, 9)).Width(ui.DpiX(600)))
+	me.cmdBar = newToolbar(me.wnd)
+	me.connBar = newToolbar(me.wnd)
 
-	action := func(text string, x, w int) *ui.Button {
-		return ui.NewButton(me.wnd, ui.OptsButton().Text(text).Position(ui.Dpi(x, 40)).Width(ui.DpiX(w)))
-	}
-	me.btnUpload = action("&Upload...", 8, 90)
-	me.btnDownload = action("Do&wnload to...", 102, 110)
-	me.btnNewFolder = action("&New folder", 216, 90)
-	me.btnRename = action("Rena&me", 310, 80)
-	me.btnDelete = action("De&lete", 394, 80)
-	me.btnTransfers = action("&Transfers", 478, 84)
-	me.btnStop = action("&Stop", 566, 66)
-	me.btnConnect = ui.NewButton(me.wnd, ui.OptsButton().Text("C&onnections...").Position(ui.Dpi(752, 40)).
-		Width(ui.DpiX(100)).Layout(ui.LAY_MOVE_HOLD))
-
+	// The tree and list are borderless and positioned by layout().
 	me.tree = ui.NewTreeView(me.wnd, ui.OptsTreeView().
-		Position(ui.Dpi(8, 74)).
-		Size(ui.Dpi(200, 452)).
-		Layout(ui.LAY_HOLD_RESIZE).
-		CtrlStyle(co.TVS_HASBUTTONS|co.TVS_HASLINES|co.TVS_LINESATROOT|co.TVS_SHOWSELALWAYS))
+		Position(ui.Dpi(0, 90)).
+		Size(ui.Dpi(220, 440)).
+		CtrlStyle(co.TVS_HASBUTTONS|co.TVS_LINESATROOT|co.TVS_SHOWSELALWAYS|co.TVS_FULLROWSELECT).
+		WndExStyle(co.WS_EX_LEFT))
 	// LVS_SHAREIMAGELISTS: the list shows the system image list, which it
 	// must never destroy.
 	me.list = ui.NewListView(me.wnd, ui.OptsListView().
-		Position(ui.Dpi(212, 74)).
-		Size(ui.Dpi(640, 452)).
-		Layout(ui.LAY_RESIZE_RESIZE).
+		Position(ui.Dpi(221, 90)).
+		Size(ui.Dpi(640, 440)).
 		CtrlStyle(co.LVS_REPORT|co.LVS_SHOWSELALWAYS|co.LVS_EDITLABELS|co.LVS_SHAREIMAGELISTS).
 		CtrlExStyle(co.LVS_EX_FULLROWSELECT|co.LVS_EX_DOUBLEBUFFER).
+		WndExStyle(co.WS_EX_LEFT).
 		Column("Name", ui.DpiX(240)).
 		Column("Date modified", ui.DpiX(120)).
 		Column("Type", ui.DpiX(130)).
@@ -167,12 +146,14 @@ func (me *Explorer) build() {
 
 func (me *Explorer) events() {
 	me.wnd.On().WmCreate(func(_ ui.WmCreate) int {
+		me.styleWindow()
 		me.list.Col(3).SetJustification(co.HDF_RIGHT)
 		sys := systemImageList()
 		me.list.Hwnd().SendMessage(co.LVM_SETIMAGELIST, win.WPARAM(co.LVSIL_SMALL), win.LPARAM(sys))
 		me.tree.Hwnd().SendMessage(co.TVM_SETIMAGELIST, win.WPARAM(co.TVSIL_NORMAL), win.LPARAM(sys))
 		me.updateSortArrows()
 		me.updateButtons()
+		me.layout()
 		cleanDragTemp()
 		me.wnd.UiThread(me.startup) // after the window is shown
 		return 0
@@ -187,25 +168,8 @@ func (me *Explorer) events() {
 		me.mu.Unlock()
 	})
 
-	me.btnBack.On().BnClicked(me.goBack)
-	me.btnForward.On().BnClicked(me.goForward)
-	me.btnUp.On().BnClicked(me.goUp)
-	me.btnGo.On().BnClicked(func() { me.navigate(me.address.Text(), true) })
-	me.btnRefresh.On().BnClicked(me.refresh)
-	me.btnUpload.On().BnClicked(me.upload)
-	me.btnDownload.On().BnClicked(me.download)
-	me.btnNewFolder.On().BnClicked(me.newFolder)
-	me.btnRename.On().BnClicked(me.startRename)
-	me.btnDelete.On().BnClicked(me.delete)
-	me.btnConnect.On().BnClicked(me.promptConnect)
-	me.btnTransfers.On().BnClicked(me.showTransfers)
-	me.btnStop.On().BnClicked(func() {
-		if me.opCancel != nil {
-			slog.Info("operation stopped by user")
-			me.opCancel()
-			me.setStatus("Stopping...")
-		}
-	})
+	me.wnd.On().WmSize(func(_ ui.WmSize) { me.layout() })
+	me.toolbarEvents()
 
 	me.wnd.On().WmDropFiles(func(p ui.WmDropFiles) {
 		files, _ := p.HDrop().DragQueryFile()
@@ -278,20 +242,23 @@ func setPartText(part ui.StatusBarPart, text string) {
 func (me *Explorer) updateButtons() {
 	connected := me.isConnected()
 	sel := me.list.SelectedItemCount()
-	enable := func(b *ui.Button, on bool) { b.Hwnd().EnableWindow(on && !me.busy) }
-	enable(me.btnBack, connected && len(me.back) > 0)
-	enable(me.btnForward, connected && len(me.forward) > 0)
-	enable(me.btnUp, connected && me.dir != "")
-	enable(me.btnGo, connected)
-	enable(me.btnRefresh, connected)
-	enable(me.btnUpload, connected)
-	enable(me.btnDownload, connected && sel > 0)
-	enable(me.btnNewFolder, connected)
-	enable(me.btnRename, connected && sel == 1)
-	enable(me.btnDelete, connected && sel > 0)
-	me.btnConnect.Hwnd().EnableWindow(!me.busy)
-	enable(me.btnTransfers, connected)
-	me.btnStop.Hwnd().EnableWindow(me.busy && me.opCancel != nil)
+	nav := func(id uint16, on bool) { enableButton(me.navBar, id, on && !me.busy) }
+	cmd := func(id uint16, on bool) { enableButton(me.cmdBar, id, on && !me.busy) }
+	nav(tbBack, connected && len(me.back) > 0)
+	nav(tbForward, connected && len(me.forward) > 0)
+	nav(tbUp, connected && me.dir != "")
+	nav(tbRefresh, connected)
+	cmd(tbNewFolder, connected)
+	cmd(tbUpload, connected)
+	cmd(tbDownload, connected && sel > 0)
+	cmd(tbCut, connected && sel > 0)
+	cmd(tbCopy, connected && sel > 0 && me.canCopy)
+	cmd(tbPaste, connected && len(me.clip) > 0)
+	cmd(tbRename, connected && sel == 1)
+	cmd(tbDelete, connected && sel > 0)
+	cmd(tbTransfers, connected)
+	enableButton(me.cmdBar, tbStop, me.busy && me.opCancel != nil)
+	enableButton(me.connBar, tbConnections, !me.busy)
 	if !connected {
 		setPartText(me.status.Part(1), "")
 	} else if sel > 0 {
@@ -363,7 +330,7 @@ func (me *Explorer) promptConnect() {
 		return
 	}
 	if len(me.cfg.Profiles) == 0 {
-		p, ok := editProfile(me.wnd, "New connection", config.Profile{UseAgent: true})
+		p, ok := editProfile(me.wnd, "New connection", config.Profile{Auth: remote.AuthAuto})
 		if !ok {
 			return
 		}
@@ -392,6 +359,15 @@ func (me *Explorer) connect(p config.Profile, automatic bool) {
 		})
 		return trusted
 	}
+	rc.Password = func(prompt string) (string, error) {
+		var pw string
+		var ok bool
+		me.onUI(func() { pw, ok = showInput(me.wnd, "Password", prompt, "", true) })
+		if !ok {
+			return "", errors.New("cancelled")
+		}
+		return pw, nil
+	}
 	rc.Passphrase = func(keyFile string) ([]byte, error) {
 		var pass string
 		var ok bool
@@ -408,7 +384,7 @@ func (me *Explorer) connect(p config.Profile, automatic bool) {
 	me.setStatus("Connecting to " + p.DisplayName() + "...")
 	me.updateButtons()
 	slog.Info("connect", "profile", p.DisplayName(), "host", p.Host, "port", p.Port, "user", p.User, "root", p.Root,
-		"keyFile", p.KeyFile, "agent", p.UseAgent, "knownHosts", rc.KnownHostsFile, "transferLog", p.TransferLogFile(me.cfgDir))
+		"auth", p.Auth, "keyFile", p.KeyFile, "knownHosts", rc.KnownHostsFile, "transferLog", p.TransferLogFile(me.cfgDir))
 	go func() {
 		var a *app.App
 		err := errors.New("internal error, see the log")

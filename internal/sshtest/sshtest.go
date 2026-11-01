@@ -31,6 +31,10 @@ import (
 type Options struct {
 	// Overwriting makes plain SFTP rename replace existing targets.
 	Overwriting bool
+	// Password enables password authentication with this password.
+	Password string
+	// ExtraKeys are accepted in addition to the generated client key.
+	ExtraKeys []ssh.PublicKey
 }
 
 // Server is a running test server with one cloud root.
@@ -71,11 +75,21 @@ func Start(t *testing.T, opts Options) *Server {
 
 	cfg := &ssh.ServerConfig{
 		PublicKeyCallback: func(_ ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
-			if bytes.Equal(key.Marshal(), clientKey.PublicKey().Marshal()) {
-				return nil, nil
+			for _, k := range append([]ssh.PublicKey{clientKey.PublicKey()}, opts.ExtraKeys...) {
+				if bytes.Equal(key.Marshal(), k.Marshal()) {
+					return nil, nil
+				}
 			}
 			return nil, os.ErrPermission
 		},
+	}
+	if opts.Password != "" {
+		cfg.PasswordCallback = func(_ ssh.ConnMetadata, pw []byte) (*ssh.Permissions, error) {
+			if string(pw) == opts.Password {
+				return nil, nil
+			}
+			return nil, os.ErrPermission
+		}
 	}
 	cfg.AddHostKey(hostKey)
 
@@ -113,6 +127,7 @@ func (s *Server) Config() remote.Config {
 		Port:           portNum,
 		User:           "team",
 		Root:           s.Root,
+		Auth:           remote.AuthKeyFile,
 		KeyFile:        keyFile,
 		KnownHostsFile: filepath.Join(local, "known_hosts"),
 		TrustHost:      func(string, ssh.PublicKey) bool { return true },

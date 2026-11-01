@@ -8,9 +8,12 @@ A local transfer list is used to detect collisions.
 
 ## Constraints
 
-- Windows 10/11, native Win32 controls via windigo. Single `.exe`.
-- Server: plain OpenSSH SFTP. No shell, no daemon.
-- One shared SSH account, one key per person in `authorized_keys`. Key auth only.
+- Windows 10/11, native Win32 controls via windigo, styled like Windows 11.
+  Single `.exe`.
+- Server: plain OpenSSH SFTP. No shell, no daemon. Server-side copy needs the
+  `copy-data` extension (OpenSSH 9.0+); everything else works on any SFTP server.
+- Typically one shared SSH account with a key per person in `authorized_keys`;
+  password login is supported too. Passwords and passphrases are never stored.
 - File content only moves after an explicit user action (drag, menu, prompt).
 - Collision detection uses SHA-256 hashes only, never clocks or mtimes.
 - Every server change is atomic: a single SFTP rename. Uploads go to a temp
@@ -73,7 +76,7 @@ read or written yourself, and only while holding the claim. Detected in three
 places:
 
 - **Listing**: the hash file's size differs from the file's size. Shown as
-  "unknown version" overlay. A listing never writes anything.
+  "Changed on server" in the Status column. A listing never writes anything.
 - **Download**: the hash of the bytes just read differs from the hash file, or
   there is none. The transfer list gets the real hash. Then repair: claim the
   file; if the hash file is still the same stale one and the claimed file's size
@@ -93,37 +96,95 @@ change listed under weaknesses).
 **Replace** uses the same claim steps, without the comparison. **Keep both**
 renames temp to `<name> (2).<ext>` (next free number) and writes its hash file.
 
+## Connections and login
+
+- Saved connections in `%APPDATA%\SSH-Cloud\config.json`, managed in a
+  Connections dialog (connect, new, edit, delete). Each has a stable ID, so a
+  rename keeps its transfer list. The app connects to the last used one at
+  startup and opens the manager when that fails.
+- Authentication per connection:
+  - **Automatic** (default): the Windows OpenSSH agent, then Pageant, then the
+    default keys `~/.ssh/id_ed25519`, `id_ecdsa`, `id_rsa`, then a password
+    prompt. An encrypted default key is offered by its `.pub` key and only
+    decrypted (passphrase prompt) when the server accepts it, like OpenSSH.
+  - **Key file**: one private key, passphrase prompted if encrypted.
+  - **Pageant**: PuTTY's agent, spoken to directly over its WM_COPYDATA protocol.
+  - **Password**: password and keyboard-interactive.
+- Host keys are checked against `~/.ssh/known_hosts`: unknown hosts are shown
+  with their fingerprint to trust, a changed key is always refused.
+
 ## Transfer list
 
 - Local, per connection profile, append-only (`%APPDATA%\SSH-Cloud\`).
 - Entry: time, direction, remote path, local path, size, SHA-256, result.
-- Shown in a Transfers window (history plus running transfers with progress).
+- Shown in a Transfers window (newest first, including moves and errors).
 - Renames and moves made in the app update the paths in the list.
 
 ## Explorer window
 
-- Address bar, Back/Forward/Up, folder tree, file list (Name, Modified, Type,
-  Size), status bar. Hash, claim and temp files are hidden.
-- Overlay icon when a file changed on the server since your last transfer (hash
-  files are read lazily, only for visible files that are in the transfer list).
-- Shell icons via `SHGetFileInfo`, sorting, multi-select, usual keyboard
-  shortcuts (F2, Del, F5, Backspace, Ctrl+X/C/V).
-- Drag out: download (delayed rendering, so data only moves on drop).
-  Drag in: upload with the check above. Drag within: server-side move.
-- Context menu: Download to..., Rename, Delete, Copy path, Properties.
-- Copy only server side (`copy-data` extension); greyed out if unsupported.
-- Long operations run in the background with progress and cancel.
+- Windows 11 look: Fluent UI System Icons (MIT, embedded SVGs rendered at the
+  screen's DPI) on flat toolbars, the Explorer theme on the tree and list,
+  Segoe UI Variable (falls back to the system font on Windows 10), a white
+  content area with thin dividers, and a rounded window with a Mica title bar.
+- Navigation row: Back, Forward, Up, Refresh and the address bar. Command bar:
+  New folder, Upload, Download, Cut, Copy, Paste, Rename, Delete, Transfers,
+  Stop, and Connections on the right.
+- Folder tree (loaded as you expand it, kept in step with the list) and a file
+  list with Name, Date modified, Type, Size and Status. Real shell icons and
+  type names; click a header to sort (folders first). Hash, claim and temp
+  files are hidden.
+- Status column: "Up to date" or "Changed on server" for files this client
+  transferred before (only their small hash files are read, in the background).
+- Keyboard: Ctrl+X/C/V, Ctrl+A, Ctrl+Shift+N, F2, Del, F5, Backspace,
+  Alt+Left/Right/Up, Ctrl+L or Alt+D for the address bar. While typing in the
+  address bar or renaming, editing keys act on the text.
+- Drag in from Windows Explorer: upload into the folder under the cursor or the
+  current folder. Drag within the list onto a folder: move on the server.
+- Drag out to Windows Explorer: a hand-written COM `IDataObject` offers
+  `FileGroupDescriptorW` (built from listings only) and `FileContents`; each file
+  is downloaded through the transfer engine only when the drop target asks for
+  it, so the transfer list records its hash.
+- Context menu: Open, Download to..., Cut, Copy, Paste, Rename, Delete,
+  Copy path, New folder, Upload, Refresh.
+- Server-side copy (Copy then Paste): `copy-data` on a small SFTP session of its
+  own (pkg/sftp has no API for it), into a temp file and renamed into place
+  without overwriting. Explorer style names ("report - Copy.docx"). The hash
+  file is carried over only when it is valid for the source and did not change
+  during the copy. Greyed out when the server has no `copy-data`.
+- Uploads, downloads, copies and deletes run on a goroutine with a progress
+  window (current file, bytes, speed, time left, Cancel). Collision prompts
+  open on top of it.
+
+## Logging
+
+All packages log through `log/slog` to `%APPDATA%\SSH-Cloud\ssh-cloud.log`
+(rotated at 5 MB): connects, login method and keys used (by fingerprint),
+host key decisions, server capabilities, every move, delete, upload, download
+and copy, conflicts and the user's choices, hash repairs, reconnects and
+errors. Crashes and panics in background work are logged too. Passwords and
+passphrases are never logged.
 
 ## Architecture
 
 ```
-internal/remote/       SSH/SFTP connection, atomic ops, folder create/prune
-internal/transfer/     download, upload, hashing, collision check
+cmd/ssh-cloud/         the Windows program (manifest for common controls v6)
+cmd/sshcloud-cli/      command-line tool for testing against a real server
+internal/remote/       SSH/SFTP connection, login methods, Pageant, atomic ops,
+                       folder create/prune, copy-data
+internal/transfer/     download, upload, copy, hashing, collision check, progress
 internal/transferlog/  local transfer list
-internal/ui/           windigo windows, list/tree, dialogs, drag and drop
+internal/app/          window-independent explorer logic: listing, virtual
+                       folders, multi-file operations, status, reconnect
+internal/config/       saved connections and settings
+internal/dragdata/     FileGroupDescriptorW bytes for drag out
+internal/icons/        Fluent SVG icons, rasterised at any size and colour
+internal/logging/      log file setup
+internal/sshtest/      in-process SSH server for tests (OpenSSH rename rules)
+internal/ui/           windigo windows, toolbars, dialogs, drag and drop
 ```
 
-Everything outside `ui` is testable on Linux against a local `sshd`.
+Everything outside `ui` is plain Go and tested on Linux against the in-process
+server. `ui` is Windows-only and tested by hand.
 
 ## Milestones
 
@@ -139,6 +200,12 @@ Everything outside `ui` is testable on Linux against a local `sshd`.
    (copy is server side with `copy-data`), keyboard shortcuts, and a progress
    window with cancel for uploads, downloads, copies and deletes, which run
    on a background goroutine.
+7. Windows 11 look (Fluent icons, toolbars, Explorer theme, font, frame) and
+   login methods: automatic, key file, Pageant, password.
+
+Milestones 1 to 6 are done; 7 is in progress. Parts that need the Windows UI
+(drag out, the toolbars and theme, Pageant) are only verified by testing on
+Windows.
 
 ## Known weaknesses (accepted)
 
@@ -151,3 +218,9 @@ Everything outside `ui` is testable on Linux against a local `sshd`.
   same size made that way goes unnoticed; such tools should delete the hash file
   when they change a file.
 - The transfer list is per client: uploading from another machine always asks.
+- Drag out blocks the window while Explorer fetches the files (the OLE drag
+  loop runs on the UI thread). Async extraction (`IDataObjectAsyncCapability`)
+  would fix this.
+- Pageant checks that the request's file mapping belongs to the current user;
+  for an elevated (administrator) process this may fail, as the default owner
+  is then the Administrators group.

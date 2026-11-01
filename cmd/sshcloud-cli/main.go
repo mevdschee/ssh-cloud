@@ -33,12 +33,13 @@ import (
 
 func main() {
 	home, _ := os.UserHomeDir()
-	cfg := remote.Config{UseAgent: true}
+	var cfg remote.Config
 	flag.StringVar(&cfg.Host, "host", "", "server host name")
 	flag.IntVar(&cfg.Port, "port", 22, "server port")
 	flag.StringVar(&cfg.User, "user", "", "username on the server")
 	flag.StringVar(&cfg.Root, "root", "", "cloud folder on the server (default: home directory)")
-	flag.StringVar(&cfg.KeyFile, "key", "", "private key file (default: ssh-agent only)")
+	flag.StringVar(&cfg.Auth, "auth", remote.AuthAuto, "authentication: auto, keyfile, pageant or password")
+	flag.StringVar(&cfg.KeyFile, "key", "", "private key file (with -auth keyfile)")
 	flag.StringVar(&cfg.KnownHostsFile, "known-hosts", filepath.Join(home, ".ssh", "known_hosts"), "known_hosts file")
 	flag.Usage = func() {
 		fmt.Fprintln(os.Stderr, "usage: sshcloud-cli [flags] ls|stat|mv|rename|rm|mkdir|get|put args...")
@@ -51,6 +52,10 @@ func main() {
 	}
 	cfg.TrustHost = askTrust
 	cfg.Passphrase = askPassphrase
+	cfg.Password = askPassword
+	if cfg.KeyFile != "" && cfg.Auth == remote.AuthAuto {
+		cfg.Auth = remote.AuthKeyFile
+	}
 
 	c, err := remote.Dial(context.Background(), cfg)
 	if err != nil {
@@ -175,6 +180,13 @@ func askPassphrase(keyFile string) ([]byte, error) {
 	pass, err := term.ReadPassword(int(os.Stdin.Fd()))
 	fmt.Fprintln(os.Stderr)
 	return pass, err
+}
+
+func askPassword(prompt string) (string, error) {
+	fmt.Fprintf(os.Stderr, "%s: ", strings.TrimSuffix(strings.TrimSpace(prompt), ":"))
+	pass, err := term.ReadPassword(int(os.Stdin.Fd()))
+	fmt.Fprintln(os.Stderr)
+	return string(pass), err
 }
 
 func fail(err error) {

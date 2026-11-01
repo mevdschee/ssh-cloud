@@ -19,14 +19,17 @@ import (
 type Profile struct {
 	// ID is stable for the life of the profile (the name can change); it
 	// names the profile's transfer list file.
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	Host     string `json:"host"`
-	Port     int    `json:"port,omitempty"`
-	User     string `json:"user"`
-	Root     string `json:"root,omitempty"`
-	KeyFile  string `json:"keyFile,omitempty"`
-	UseAgent bool   `json:"useAgent"`
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	Host string `json:"host"`
+	Port int    `json:"port,omitempty"`
+	User string `json:"user"`
+	Root string `json:"root,omitempty"`
+	// Auth is remote.AuthAuto, AuthKeyFile, AuthPageant or AuthPassword.
+	Auth    string `json:"auth,omitempty"`
+	KeyFile string `json:"keyFile,omitempty"`
+	// UseAgent is only read from configs written before Auth existed.
+	UseAgent bool `json:"useAgent,omitempty"`
 }
 
 // Config is the whole settings file.
@@ -59,6 +62,13 @@ func Load(dir string) (*Config, error) {
 		return nil, err
 	}
 	for i := range c.Profiles {
+		if c.Profiles[i].Auth == "" {
+			c.Profiles[i].Auth = remote.AuthAuto
+			if c.Profiles[i].KeyFile != "" {
+				c.Profiles[i].Auth = remote.AuthKeyFile
+			}
+			c.Profiles[i].UseAgent = false
+		}
 		if c.Profiles[i].ID == "" {
 			// Profiles from before IDs existed keep their transfer list,
 			// which was named after the display name.
@@ -165,8 +175,8 @@ func (p Profile) RemoteConfig() remote.Config {
 		Port:           p.Port,
 		User:           p.User,
 		Root:           p.Root,
+		Auth:           p.Auth,
 		KeyFile:        p.KeyFile,
-		UseAgent:       p.UseAgent,
 		KnownHostsFile: filepath.Join(home, ".ssh", "known_hosts"),
 	}
 }

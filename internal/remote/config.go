@@ -21,13 +21,16 @@ type Config struct {
 	// Root is the absolute path of the cloud folder on the server.
 	Root string
 
-	// KeyFile is an optional path to a private key. When empty, only the
-	// ssh-agent is used.
+	// Auth is the authentication method: AuthAuto (default), AuthKeyFile,
+	// AuthPageant or AuthPassword.
+	Auth string
+	// KeyFile is the private key for AuthKeyFile.
 	KeyFile string
-	// UseAgent enables keys from the running ssh-agent.
-	UseAgent bool
-	// Passphrase is called when KeyFile is encrypted. May be nil.
+	// Passphrase is called for an encrypted key file. May be nil.
 	Passphrase func(keyFile string) ([]byte, error)
+	// Password is called for password and keyboard-interactive prompts.
+	// May be nil (then those methods are not offered).
+	Password func(prompt string) (string, error)
 
 	// KnownHostsFile is the known_hosts file used to verify the server.
 	KnownHostsFile string

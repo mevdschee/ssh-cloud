@@ -2,6 +2,8 @@ package config
 
 import (
 	"os"
+
+	"github.com/mevdschee/ssh-cloud/internal/remote"
 	"path/filepath"
 	"testing"
 )
@@ -53,5 +55,8 @@ func TestOldConfigWithoutIDsKeepsTransferList(t *testing.T) {
 	}
 	if got := filepath.Base(p.TransferLogFile(dir)); got != "transfers-team@host.jsonl" {
 		t.Fatalf("old transfer list name should be kept, got %s", got)
+	}
+	if p.Auth != remote.AuthAuto {
+		t.Fatalf("old profile without key file should become automatic, got %q", p.Auth)
 	}
 }
