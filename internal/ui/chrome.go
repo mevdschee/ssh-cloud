@@ -182,7 +182,9 @@ func (me *Explorer) layout() {
 	move(me.statusText.Hwnd(), ui.DpiX(12), ch-statusH, cw/2, statusH)
 	move(me.countText.Hwnd(), cw/2, ch-statusH, cw/2-ui.DpiX(16), statusH)
 
-	top, h := me.contentTop+1, ch-me.contentTop-1-statusH
+	// 1px below the divider under the command bar, 1px above the one on top
+	// of the status line.
+	top, h := me.contentTop+1, ch-me.contentTop-1-statusH-1
 	me.treeWidth = me.treeWidthFor(cw)
 	// The gap between tree and list is the draggable divider; paint() draws
 	// a 1px line in its middle.
@@ -227,7 +229,7 @@ func (me *Explorer) paint() {
 	}
 	rc, _ := me.wnd.Hwnd().GetClientRect()
 	fillRect(hdc, win.RECT{Right: rc.Right, Bottom: int32(me.bandHeight)}, bandColor)
-	for _, y := range []int32{int32(me.navLineY), int32(me.contentTop)} {
+	for _, y := range []int32{int32(me.navLineY), int32(me.contentTop), int32(me.contentBottom)} {
 		fillRect(hdc, win.RECT{Top: y, Right: rc.Right, Bottom: y + 1}, dividerColor)
 	}
 	x := int32(me.treeWidth + splitterWidth()/2)
