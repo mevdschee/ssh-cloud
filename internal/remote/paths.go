@@ -13,9 +13,9 @@ import (
 var ErrInvalidPath = errors.New("invalid path")
 
 // Suffixes of SSH-Cloud's internal files, which live next to user files as
-// hidden dotfiles: ".<name>.sha256", ".<name>.tmp-<random>" and
-// ".<name>.claim-<random>". They are never shown and cannot be created,
-// renamed or deleted directly by the user.
+// hidden dotfiles: ".<name>.tmp-<random>" and ".<name>.claim-<random>", and
+// the hash files ".<name>.sha256" that versions before v0.3 wrote. They are
+// never shown and cannot be created, renamed or deleted directly by the user.
 const (
 	hashSuffix  = ".sha256"
 	tmpMarker   = ".tmp-"
@@ -55,8 +55,9 @@ func IsInternal(name string) bool {
 		strings.Contains(name, claimMarker)
 }
 
-// HashFileName returns the name of the hash file for a file name.
-func HashFileName(name string) string { return "." + name + hashSuffix }
+// legacyHashName returns the name of the hash file that versions before
+// v0.3 kept next to a file.
+func legacyHashName(name string) string { return "." + name + hashSuffix }
 
 // validName checks a cleaned, non-root path whose last element is usable.
 func validName(p string) error {

@@ -6,14 +6,15 @@ import (
 	"io/fs"
 	"log/slog"
 	"os"
+	"time"
 
 	"github.com/pkg/sftp"
 )
 
 // Raw operations are the building blocks of the transfer protocol. Unlike the
-// user-facing operations they accept SSH-Cloud's internal file names (hash,
-// temp and claim files) and do no pruning or bookkeeping. Paths are cloud
-// paths and are cleaned, so they never leave the root.
+// user-facing operations they accept SSH-Cloud's internal file names (temp and
+// claim files) and do no pruning or bookkeeping. Paths are cloud paths and are
+// cleaned, so they never leave the root.
 
 // RawOpen opens a file for reading.
 func (c *Client) RawOpen(p string) (*sftp.File, error) {
@@ -34,6 +35,11 @@ func (c *Client) RawRemove(p string) error {
 // RawLstat stats a path without following symlinks.
 func (c *Client) RawLstat(p string) (os.FileInfo, error) {
 	return c.sftp.Lstat(c.abs(p))
+}
+
+// RawChtimes sets the access and modification time of a file.
+func (c *Client) RawChtimes(p string, atime, mtime time.Time) error {
+	return c.sftp.Chtimes(c.abs(p), atime, mtime)
 }
 
 // RawReadDir lists a namespace including internal files.

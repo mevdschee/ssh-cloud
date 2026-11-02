@@ -111,8 +111,8 @@ func (c *Client) Rename(p, newName string) error {
 // Move moves (or renames) a file or folder to a new cloud path with a single
 // SFTP rename. It never overwrites: if the target exists it fails with
 // ErrExists. Missing parent namespaces of the target are created, and parent
-// namespaces of the source that became empty are removed. A file's hash file
-// moves along with it.
+// namespaces of the source that became empty are removed. A file keeps its
+// mtime, so it keeps its version.
 func (c *Client) Move(from, to string) error {
 	from, to = Clean(from), Clean(to)
 	if err := validName(from); err != nil {
@@ -149,26 +149,22 @@ func (c *Client) Move(from, to string) error {
 		return fmt.Errorf("move %q to %q: %w", from, to, err)
 	}
 	if !src.IsDir() {
-		c.moveHashFile(from, to)
+		c.removeLegacyHash(from)
 	}
 	c.prune(Dir(from))
 	slog.Info("moved", "from", from, "to", to)
 	return nil
 }
 
-// moveHashFile moves the hash file of a moved file. The content did not
-// change, so the hash stays valid at the new location. If the hash file cannot
-// be moved it is removed, which marks the file as "unknown version" (safe).
-func (c *Client) moveHashFile(from, to string) {
-	oldHash := c.abs(Join(Dir(from), HashFileName(Base(from))))
-	newHash := c.abs(Join(Dir(to), HashFileName(Base(to))))
-	if err := c.sftp.Rename(oldHash, newHash); err != nil {
-		_ = c.sftp.Remove(oldHash)
-	}
+// removeLegacyHash removes the hidden hash file that versions before v0.3
+// kept next to file p, if there is one. It is no longer used, but would keep
+// an emptied folder from being pruned.
+func (c *Client) removeLegacyHash(p string) {
+	_ = c.sftp.Remove(c.abs(Join(Dir(p), legacyHashName(Base(p)))))
 }
 
-// Delete removes a file (with its hash file) or a folder with everything in
-// it. Parent namespaces that became empty are removed.
+// Delete removes a file or a folder with everything in it. Parent namespaces
+// that became empty are removed.
 func (c *Client) Delete(p string) error {
 	p = Clean(p)
 	if err := validName(p); err != nil {
@@ -183,7 +179,7 @@ func (c *Client) Delete(p string) error {
 	} else {
 		err = c.sftp.Remove(c.abs(p))
 		if err == nil {
-			_ = c.sftp.Remove(c.abs(Join(Dir(p), HashFileName(Base(p)))))
+			c.removeLegacyHash(p)
 		}
 	}
 	if err != nil {

@@ -17,6 +17,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"time"
 	"path/filepath"
 	"strconv"
 	"testing"
@@ -289,7 +290,13 @@ func (osHandler) Filecmd(r *sftp.Request) error {
 		return os.Mkdir(r.Filepath, 0o755)
 	case "Setstat":
 		if r.AttrFlags().Size {
-			return os.Truncate(r.Filepath, int64(r.Attributes().Size))
+			if err := os.Truncate(r.Filepath, int64(r.Attributes().Size)); err != nil {
+				return err
+			}
+		}
+		if r.AttrFlags().Acmodtime {
+			a := r.Attributes()
+			return os.Chtimes(r.Filepath, time.Unix(int64(a.Atime), 0), time.Unix(int64(a.Mtime), 0))
 		}
 		return nil
 	}

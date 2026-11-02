@@ -1,15 +1,15 @@
 // Package transfer moves file content between the local disk and the cloud,
-// with hash based collision detection.
+// with version based collision detection.
 //
 // Protocol summary (see PLAN.md):
-//   - Every file may have a hidden hash file ".<name>.sha256" holding the
-//     SHA-256 and size of its current content. Missing or invalid means
-//     "unknown version".
+//   - A version of a file on the server is its size and the server's mtime.
+//     The transfer list records the version of every download and upload.
 //   - An upload goes to a hidden temp file first. Replacing an existing file
 //     claims it by renaming it to ".<name>.claim-<random>"; only one client
-//     can win that rename. Under the claim the hash file is compared with the
-//     hash from this client's transfer list, then the temp file is renamed
-//     into place with a rename that never overwrites.
+//     can win that rename. Under the claim the claimed file's version is
+//     compared with this client's transfer list, the temp file gets a later
+//     mtime than the claimed one if needed, and it is renamed into place with
+//     a rename that never overwrites.
 //   - Anything that does not match is a conflict, reported as a
 //     *ConflictError so the user can choose Replace, KeepBoth or Skip.
 package transfer
@@ -50,8 +50,7 @@ type Reason string
 const (
 	ChangedOnServer  Reason = "changed on the server since your last transfer"
 	NeverTransferred Reason = "not transferred by you before"
-	UnknownVersion   Reason = "version unknown (no hash file)"
-	ChangedOutside   Reason = "changed outside SSH-Cloud"
+	UnknownVersion   Reason = "version unknown"
 	CreatedMeanwhile Reason = "created by someone else during your upload"
 	OtherLocalFile   Reason = "already on the server, last transferred with another local file"
 	MissingMeanwhile Reason = "deleted, moved or being replaced by someone else during your upload"
@@ -82,6 +81,7 @@ type Result struct {
 	Path    string // remote path actually written or read
 	Size    int64
 	Hash    string
+	ModTime time.Time // server mtime of the version; zero when unknown
 	Outcome transferlog.Result
 }
 
@@ -162,7 +162,7 @@ func (e *Engine) Upload(ctx context.Context, localPath, remotePath string, mode 
 	}
 	switch {
 	case err == nil:
-		entry.RemotePath, entry.Result = res.Path, res.Outcome
+		entry.RemotePath, entry.Result, entry.Mtime = res.Path, res.Outcome, unix(res.ModTime)
 	case errors.Is(err, ErrConflict):
 		entry.Result = transferlog.Conflict
 	default:
@@ -182,9 +182,9 @@ func (e *Engine) upload(ctx context.Context, localPath, p string, mode Mode, loc
 			return Result{}, err
 		}
 		existed = exists
-		if unchanged {
+		if unchanged != nil {
 			e.dropPending(p)
-			return Result{Path: p, Size: local.Size, Hash: local.Hash, Outcome: transferlog.Unchanged}, nil
+			return Result{Path: p, Size: local.Size, Hash: local.Hash, ModTime: time.Unix(unchanged.Mtime, 0), Outcome: transferlog.Unchanged}, nil
 		}
 	}
 
@@ -226,64 +226,53 @@ func (e *Engine) dropPending(p string) {
 	}
 }
 
-// compare checks the server version of p against this client's last
+// compare checks the server version v of p against this client's last
 // transfer. It returns "" when they match.
-func (e *Engine) compare(p string, size int64) (Reason, *transferlog.Entry, error) {
-	h, ok, err := e.readHash(p)
-	if err != nil {
-		return "", nil, err
-	}
+func (e *Engine) compare(p string, v version) (Reason, *transferlog.Entry) {
 	last, known := e.log.Latest(p)
-	var lastp *transferlog.Entry
-	if known {
-		lastp = &last
+	if !known {
+		return NeverTransferred, nil
 	}
+	rec, ok := recorded(last)
 	switch {
 	case !ok:
-		return UnknownVersion, lastp, nil
-	case h.Size != size:
-		return ChangedOutside, lastp, nil
-	case !known:
-		return NeverTransferred, nil, nil
-	case h.Hash != last.Hash:
-		return ChangedOnServer, lastp, nil
+		return UnknownVersion, &last
+	case rec != v:
+		return ChangedOnServer, &last
 	}
-	return "", lastp, nil
+	return "", &last
 }
 
 // precheck is the cheap check before any content is sent. It only reads
-// metadata and the hash file.
-func (e *Engine) precheck(ctx context.Context, p string, local hashInfo, localPath string) (unchanged, exists bool, err error) {
+// metadata. unchanged is the server version when it already has exactly the
+// local content (as this client's last transfer of it).
+func (e *Engine) precheck(ctx context.Context, p string, local hashInfo, localPath string) (unchanged *version, exists bool, err error) {
 	fi, err := e.waitStat(ctx, p)
 	if errors.Is(err, fs.ErrNotExist) {
-		return false, false, nil // new file
+		return nil, false, nil // new file
 	}
 	if err != nil {
-		return false, false, err
+		return nil, false, err
 	}
 	if fi.IsDir() {
-		return false, true, fmt.Errorf("upload to %q: is a folder: %w", p, remote.ErrExists)
+		return nil, true, fmt.Errorf("upload to %q: is a folder: %w", p, remote.ErrExists)
 	}
-	if h, ok, err := e.readHash(p); err != nil {
-		return false, true, err
-	} else if ok && h.Hash == local.Hash && h.Size == fi.Size() {
-		return true, true, nil
-	}
-	reason, last, err := e.compare(p, fi.Size())
-	if err != nil {
-		return false, true, err
-	}
+	v := versionOf(fi)
+	reason, last := e.compare(p, v)
 	if reason != "" {
-		return false, true, &ConflictError{Path: p, Reason: reason, ServerSize: fi.Size(), Last: last}
+		return nil, true, &ConflictError{Path: p, Reason: reason, ServerSize: fi.Size(), Last: last}
+	}
+	if last.Hash == local.Hash {
+		return &v, true, nil
 	}
 	// Nobody changed the file since this client's last transfer. Replace it
 	// without asking only when the upload comes from that same local file
 	// (the drag out, edit, drag back case); another local file with the same
 	// name may well be a different document, so ask.
-	if last != nil && !SameLocalFile(*last, localPath) {
-		return false, true, &ConflictError{Path: p, Reason: OtherLocalFile, ServerSize: fi.Size(), Last: last}
+	if !SameLocalFile(*last, localPath) {
+		return nil, true, &ConflictError{Path: p, Reason: OtherLocalFile, ServerSize: fi.Size(), Last: last}
 	}
-	return false, true, nil
+	return nil, true, nil
 }
 
 // SameLocalFile reports whether localPath is the local file of a transfer:
@@ -340,19 +329,20 @@ func (e *Engine) stage(ctx context.Context, localPath, p string, local hashInfo)
 // reliably show the claim), so creating it anew could silently replace the
 // version inside that claim.
 func (e *Engine) commit(ctx context.Context, p, tmp string, mode Mode, local hashInfo, existed bool) (Result, error) {
-	done := func(path string, outcome transferlog.Result) (Result, error) {
+	done := func(path string, v version, outcome transferlog.Result) (Result, error) {
 		e.forgetPending(p)
-		if err := e.writeHash(path, local); err != nil {
-			return Result{}, err
-		}
-		return Result{Path: path, Size: local.Size, Hash: local.Hash, Outcome: outcome}, nil
+		return Result{Path: path, Size: local.Size, Hash: local.Hash, ModTime: time.Unix(v.Mtime, 0), Outcome: outcome}, nil
 	}
 	if mode == KeepBoth {
+		v, err := e.tempVersion(tmp)
+		if err != nil {
+			return Result{}, err
+		}
 		path, err := e.keepBoth(tmp, p)
 		if err != nil {
 			return Result{}, err
 		}
-		return done(path, transferlog.KeptBoth)
+		return done(path, v, transferlog.KeptBoth)
 	}
 
 	deadline := time.Now().Add(e.claimWait())
@@ -365,9 +355,13 @@ func (e *Engine) commit(ctx context.Context, p, tmp string, mode Mode, local has
 				return Result{}, &ConflictError{Path: p, Reason: MissingMeanwhile}
 			}
 			// New file: a rename that never overwrites.
-			err := e.renameNoReplace(tmp, p)
+			v, err := e.tempVersion(tmp)
+			if err != nil {
+				return Result{}, err
+			}
+			err = e.renameNoReplace(tmp, p)
 			if err == nil {
-				return done(p, transferlog.Done)
+				return done(p, v, transferlog.Done)
 			}
 			if !errors.Is(err, remote.ErrExists) {
 				return Result{}, err
@@ -400,27 +394,21 @@ func (e *Engine) commit(ctx context.Context, p, tmp string, mode Mode, local has
 		if err != nil {
 			return Result{}, err
 		}
-		return e.commitClaimed(p, tmp, claim, mode, local, done)
+		return e.commitClaimed(p, tmp, claim, mode, done)
 	}
 }
 
 // commitClaimed runs while this client holds the claim on p.
-func (e *Engine) commitClaimed(p, tmp, claim string, mode Mode, local hashInfo, done func(string, transferlog.Result) (Result, error)) (Result, error) {
+func (e *Engine) commitClaimed(p, tmp, claim string, mode Mode, done func(string, version, transferlog.Result) (Result, error)) (Result, error) {
+	fi, err := e.c.RawLstat(claim)
+	if err != nil {
+		e.restore(claim, p)
+		return Result{}, err
+	}
+	claimed := versionOf(fi)
 	outcome := transferlog.Done
 	if mode == Check {
-		fi, err := e.c.RawLstat(claim)
-		if err != nil {
-			return Result{}, err
-		}
-		reason, last, err := e.compare(p, fi.Size())
-		if err != nil {
-			e.restore(claim, p)
-			return Result{}, err
-		}
-		if reason != "" {
-			if reason == ChangedOutside {
-				_ = e.removeHash(p) // stale: content unknown and not read by us
-			}
+		if reason, last := e.compare(p, claimed); reason != "" {
 			e.restore(claim, p)
 			return Result{}, &ConflictError{Path: p, Reason: reason, ServerSize: fi.Size(), Last: last}
 		}
@@ -428,9 +416,8 @@ func (e *Engine) commitClaimed(p, tmp, claim string, mode Mode, local hashInfo, 
 		outcome = transferlog.Replaced
 	}
 
-	// Delete the hash file before the new version goes in and write it after:
-	// a crash in between leaves "unknown version", which always prompts.
-	if err := e.removeHash(p); err != nil {
+	v, err := e.later(tmp, claimed)
+	if err != nil {
 		e.restore(claim, p)
 		return Result{}, err
 	}
@@ -444,9 +431,27 @@ func (e *Engine) commitClaimed(p, tmp, claim string, mode Mode, local hashInfo, 
 		e.restore(claim, p)
 		return Result{}, err
 	}
-	res, err := done(p, outcome)
+	res, err := done(p, v, outcome)
 	_ = e.c.RawRemove(claim)
 	return res, err
+}
+
+// tempVersion returns the version of a staged temp file, which the final
+// rename keeps.
+func (e *Engine) tempVersion(tmp string) (version, error) {
+	fi, err := e.c.RawLstat(tmp)
+	if err != nil {
+		return version{}, err
+	}
+	return versionOf(fi), nil
+}
+
+// unix returns t in Unix seconds, or 0 for the zero time.
+func unix(t time.Time) int64 {
+	if t.IsZero() {
+		return 0
+	}
+	return t.Unix()
 }
 
 // forgetPending drops the pending entry without deleting the temp file (it
@@ -604,9 +609,7 @@ func (e *Engine) CanCopy() bool { return e.canCopy() }
 // Copy copies a file on the server to a new path without moving the content
 // through the client. The target must not exist (ErrExists). The copy goes to
 // a temp file first and is renamed into place with a rename that never
-// overwrites. The hash file is carried over only when it is valid for the
-// source and did not change during the copy; otherwise the copy is an
-// "unknown version".
+// overwrites. The copy is a new file with a version of its own.
 func (e *Engine) Copy(ctx context.Context, from, to string) error {
 	from, to = remote.Clean(from), remote.Clean(to)
 	if err := validTarget(to); err != nil {
@@ -617,10 +620,6 @@ func (e *Engine) Copy(ctx context.Context, from, to string) error {
 	}
 	if _, err := e.c.RawLstat(to); err == nil {
 		return fmt.Errorf("copy to %q: %w", to, remote.ErrExists)
-	}
-	before, beforeOK, err := e.readHash(from)
-	if err != nil {
-		return err
 	}
 	if err := e.c.MkdirAll(remote.Dir(to)); err != nil {
 		return err
@@ -636,17 +635,11 @@ func (e *Engine) Copy(ctx context.Context, from, to string) error {
 		_ = e.c.RawRemove(tmp)
 		return err
 	}
-	after, afterOK, _ := e.readHash(from)
 	if err := e.renameNoReplace(tmp, to); err != nil {
 		_ = e.c.RawRemove(tmp)
 		return err
 	}
-	if beforeOK && afterOK && before == after && before.Size == fi.Size() {
-		if err := e.writeHash(to, before); err != nil {
-			return err
-		}
-	}
-	slog.Info("copy done", "from", from, "to", to, "size", fi.Size(), "hashCarried", beforeOK && afterOK && before == after)
+	slog.Info("copy done", "from", from, "to", to, "size", fi.Size())
 	return nil
 }
 
@@ -656,14 +649,14 @@ func (e *Engine) SetCopyFunc(fn func(ctx context.Context, from, to string) error
 	e.copyData, e.canCopy = fn, func() bool { return true }
 }
 
-// ServerChanged compares a file on the server with this client's last
-// transfer of it, reading only its hash file. known is false when this
+// ServerChanged compares a file on the server, by the size and mtime from a
+// listing, with this client's last transfer of it. known is false when this
 // client never transferred the file.
-func (e *Engine) ServerChanged(p string, size int64) (changed, known bool, err error) {
+func (e *Engine) ServerChanged(p string, size int64, mtime time.Time) (changed, known bool) {
 	p = remote.Clean(p)
 	if _, ok := e.log.Latest(p); !ok {
-		return false, false, nil
+		return false, false
 	}
-	reason, _, err := e.compare(p, size)
-	return reason != "", true, err
+	reason, _ := e.compare(p, version{Size: size, Mtime: mtime.Unix()})
+	return reason != "", true
 }

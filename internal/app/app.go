@@ -711,8 +711,8 @@ const (
 	StatusChanged                    // changed on the server since then
 )
 
-// Status checks files of a listing against the transfer list. Only files this
-// client transferred are checked (one small hash file read each).
+// Status checks files of a listing against the transfer list, by the size
+// and mtime in the listing. Only files this client transferred are checked.
 func (a *App) Status(ctx context.Context, entries []remote.Entry) map[string]FileStatus {
 	out := map[string]FileStatus{}
 	_, e, err := a.conn(ctx)
@@ -723,9 +723,9 @@ func (a *App) Status(ctx context.Context, entries []remote.Entry) map[string]Fil
 		if f.IsDir || ctx.Err() != nil {
 			continue
 		}
-		changed, known, err := e.ServerChanged(f.Path, f.Size)
+		changed, known := e.ServerChanged(f.Path, f.Size, f.ModTime)
 		switch {
-		case err != nil || !known:
+		case !known:
 		case changed:
 			out[f.Path] = StatusChanged
 		default:

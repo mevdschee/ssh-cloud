@@ -66,8 +66,17 @@ func sha(s string) string {
 	return hex.EncodeToString(h[:])
 }
 
-func hashFile(content string) string {
-	return fmt.Sprintf("sha256 %s %d\n", sha(content), len(content))
+// hashFiles lists hash files (as SSH-Cloud before v0.3 wrote) below the root.
+func hashFiles(t *testing.T, srv *sshtest.Server) []string {
+	t.Helper()
+	var found []string
+	filepath.WalkDir(srv.Root, func(p string, d os.DirEntry, err error) error {
+		if err == nil && strings.HasSuffix(d.Name(), ".sha256") {
+			found = append(found, p)
+		}
+		return nil
+	})
+	return found
 }
 
 func conflictReason(t *testing.T, err error) Reason {
@@ -92,7 +101,7 @@ func internalFiles(t *testing.T, srv *sshtest.Server) []string {
 	return left
 }
 
-func TestUploadNewFileWritesHashFile(t *testing.T) {
+func TestUploadNewFileRecordsVersion(t *testing.T) {
 	srv := sshtest.Start(t, sshtest.Options{})
 	a := newMachine(t, srv)
 	a.write("report.docx", "v1")
@@ -104,8 +113,16 @@ func TestUploadNewFileWritesHashFile(t *testing.T) {
 	if res.Outcome != transferlog.Done || srv.Read("docs/report.docx") != "v1" {
 		t.Fatalf("unexpected result %+v", res)
 	}
-	if got := srv.Read("docs/.report.docx.sha256"); got != hashFile("v1") {
-		t.Fatalf("hash file = %q", got)
+	fi, err := os.Stat(srv.Path("docs/report.docx"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	last, ok := a.e.log.Latest("docs/report.docx")
+	if !ok || last.Size != 2 || last.Mtime != fi.ModTime().Unix() || last.Hash != sha("v1") {
+		t.Fatalf("transfer list should record the server version, got %+v", last)
+	}
+	if found := hashFiles(t, srv); len(found) != 0 {
+		t.Fatalf("no hash files may be written: %v", found)
 	}
 	if left := internalFiles(t, srv); len(left) != 0 {
 		t.Fatalf("leftover files: %v", left)
@@ -124,8 +141,8 @@ func TestDownloadEditUploadReplacesWithoutPrompt(t *testing.T) {
 	if _, err := a.e.Upload(bg, a.file("copy.txt"), "r.txt", Check); err != nil {
 		t.Fatal(err)
 	}
-	if srv.Read("r.txt") != "v2 longer" || srv.Read(".r.txt.sha256") != hashFile("v2 longer") {
-		t.Fatal("server should have v2 with a matching hash file")
+	if srv.Read("r.txt") != "v2 longer" {
+		t.Fatal("server should have v2")
 	}
 }
 
@@ -146,15 +163,32 @@ func TestUnchangedUploadSendsNothing(t *testing.T) {
 	}
 }
 
-func TestSameContentFromOtherClientIsUnchanged(t *testing.T) {
+func TestSameSizeChangeWithinOneSecondIsDetected(t *testing.T) {
 	srv := sshtest.Start(t, sshtest.Options{})
 	a, b := newMachine(t, srv), newMachine(t, srv)
-	a.write("r.txt", "same")
+	a.write("r.txt", "v1")
 	a.upload("r.txt", "r.txt", Check)
-	b.write("r.txt", "same")
-	res, err := b.upload("r.txt", "r.txt", Check)
-	if err != nil || res.Outcome != transferlog.Unchanged {
-		t.Fatalf("identical content should be skipped, got %+v %v", res, err)
+	b.download("r.txt", "r.txt")
+	before, _ := os.Stat(srv.Path("r.txt"))
+
+	// a replaces it right away with content of the same size: the server's
+	// own mtime is most likely the same second, so a later one must be set.
+	a.write("r.txt", "v2")
+	if _, err := a.upload("r.txt", "r.txt", Check); err != nil {
+		t.Fatal(err)
+	}
+	after, _ := os.Stat(srv.Path("r.txt"))
+	if !after.ModTime().After(before.ModTime()) {
+		t.Fatalf("new version needs a later mtime: %v then %v", before.ModTime(), after.ModTime())
+	}
+
+	b.write("r.txt", "b2")
+	_, err := b.upload("r.txt", "r.txt", Check)
+	if r := conflictReason(t, err); r != ChangedOnServer {
+		t.Fatalf("want ChangedOnServer, got %s", r)
+	}
+	if srv.Read("r.txt") != "v2" {
+		t.Fatal("conflicting upload must not change the server")
 	}
 }
 
@@ -215,8 +249,8 @@ func TestKeepBoth(t *testing.T) {
 	if res.Path != "report (3).docx" || srv.Read("report (3).docx") != "b" || srv.Read("report.docx") != "v1" {
 		t.Fatalf("keep both wrote %+v", res)
 	}
-	if srv.Read(".report (3).docx.sha256") != hashFile("b") {
-		t.Fatal("copy needs its own hash file")
+	if last, ok := b.e.log.Latest("report (3).docx"); !ok || last.Mtime == 0 {
+		t.Fatalf("keep both should record the version of the copy, got %+v", last)
 	}
 }
 
@@ -275,30 +309,39 @@ func TestConflictAfterSendReusesTemp(t *testing.T) {
 	}
 }
 
-func TestOutsideChangeIsDetectedAndStaleHashRemoved(t *testing.T) {
+func TestOutsideChangeIsDetected(t *testing.T) {
 	srv := sshtest.Start(t, sshtest.Options{})
 	a := newMachine(t, srv)
 	a.write("r.txt", "v1")
 	a.upload("r.txt", "r.txt", Check)
-	srv.Write("r.txt", "changed with scp") // hash file not updated
+	// Changed with scp a little later, with the same size.
+	srv.Write("r.txt", "v9")
+	later := time.Now().Add(5 * time.Second)
+	if err := os.Chtimes(srv.Path("r.txt"), later, later); err != nil {
+		t.Fatal(err)
+	}
 
 	a.write("r.txt", "a2")
 	_, err := a.upload("r.txt", "r.txt", Check)
-	if r := conflictReason(t, err); r != ChangedOutside {
-		t.Fatalf("want ChangedOutside, got %s", r)
+	if r := conflictReason(t, err); r != ChangedOnServer {
+		t.Fatalf("want ChangedOnServer, got %s", r)
 	}
 }
 
-func TestDownloadRepairsMissingHashFile(t *testing.T) {
+func TestDownloadRecordsVersionAndWritesNothing(t *testing.T) {
 	srv := sshtest.Start(t, sshtest.Options{})
 	srv.Write("legacy.txt", "uploaded with scp")
+	srv.Write(".legacy.txt.sha256", "sha256 stale 1\n") // left by v0.2, ignored
 	a := newMachine(t, srv)
-	a.download("legacy.txt", "legacy.txt")
-	if got := srv.Read(".legacy.txt.sha256"); got != hashFile("uploaded with scp") {
-		t.Fatalf("hash file should be repaired, got %q", got)
+	res, err := a.e.Download(bg, "legacy.txt", a.file("legacy.txt"))
+	if err != nil {
+		t.Fatal(err)
 	}
-	if srv.Read("legacy.txt") != "uploaded with scp" || len(internalFiles(t, srv)) != 0 {
-		t.Fatal("repair must restore the file and leave no claim")
+	if res.Hash != sha("uploaded with scp") || res.ModTime.IsZero() {
+		t.Fatalf("download must record hash and version, got %+v", res)
+	}
+	if srv.Read(".legacy.txt.sha256") != "sha256 stale 1\n" || len(internalFiles(t, srv)) != 0 {
+		t.Fatal("a download must not write to the server")
 	}
 	// Now an edit goes through without a prompt.
 	a.write("legacy.txt", "edited")
@@ -307,17 +350,19 @@ func TestDownloadRepairsMissingHashFile(t *testing.T) {
 	}
 }
 
-func TestDownloadRepairsStaleHashFile(t *testing.T) {
+func TestEntryWithoutVersionPrompts(t *testing.T) {
 	srv := sshtest.Start(t, sshtest.Options{})
-	srv.Write("r.txt", "new content")
-	srv.Write(".r.txt.sha256", hashFile("old"))
 	a := newMachine(t, srv)
-	res, err := a.e.Download(bg, "r.txt", a.file("r.txt"))
-	if err != nil {
+	srv.Write("r.txt", "v1")
+	// An entry written by SSH-Cloud before v0.3 has no mtime.
+	if err := a.e.log.Add(transferlog.Entry{Direction: transferlog.Download, RemotePath: "r.txt", LocalPath: a.file("r.txt"),
+		Size: 2, Hash: sha("v1"), Result: transferlog.Done}); err != nil {
 		t.Fatal(err)
 	}
-	if res.Hash != sha("new content") || srv.Read(".r.txt.sha256") != hashFile("new content") {
-		t.Fatal("download must record and repair with the real hash")
+	a.write("r.txt", "v2")
+	_, err := a.upload("r.txt", "r.txt", Check)
+	if r := conflictReason(t, err); r != UnknownVersion {
+		t.Fatalf("want UnknownVersion, got %s", r)
 	}
 }
 
@@ -505,7 +550,7 @@ func localCopy(srv *sshtest.Server) func(context.Context, string, string) error 
 	}
 }
 
-func TestCopyCarriesHashFile(t *testing.T) {
+func TestCopy(t *testing.T) {
 	srv := sshtest.Start(t, sshtest.Options{})
 	a := newMachine(t, srv)
 	if a.e.CanCopy() {
@@ -521,23 +566,14 @@ func TestCopyCarriesHashFile(t *testing.T) {
 	if err := a.e.Copy(bg, "docs/r.txt", "other/r copy.txt"); err != nil {
 		t.Fatal(err)
 	}
-	if srv.Read("other/r copy.txt") != "v1" || srv.Read("other/.r copy.txt.sha256") != hashFile("v1") {
-		t.Fatal("copy should have the content and the hash file")
+	if srv.Read("other/r copy.txt") != "v1" || len(hashFiles(t, srv)) != 0 {
+		t.Fatal("copy should have the content and no hash file")
 	}
 	if err := a.e.Copy(bg, "docs/r.txt", "other/r copy.txt"); !errors.Is(err, remote.ErrExists) {
 		t.Fatalf("copy must never overwrite, got %v", err)
 	}
 	if left := internalFiles(t, srv); len(left) != 0 {
 		t.Fatalf("leftover files: %v", left)
-	}
-
-	// A source without a valid hash file gives an "unknown version" copy.
-	srv.Write("legacy.txt", "scp")
-	if err := a.e.Copy(bg, "legacy.txt", "legacy2.txt"); err != nil {
-		t.Fatal(err)
-	}
-	if srv.Exists(".legacy2.txt.sha256") {
-		t.Fatal("no hash file may be invented for content nobody hashed")
 	}
 }
 

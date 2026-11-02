@@ -17,35 +17,60 @@ A local transfer list is used to detect collisions.
 - Typically one shared SSH account with a key per person in `authorized_keys`;
   password login is supported too. Passwords and passphrases are never stored.
 - File content only moves after an explicit user action (drag, menu, prompt).
-- Collision detection uses SHA-256 hashes only, never clocks or mtimes.
+- Collision detection compares the server's own size and modification time of
+  a file with this client's last transfer. Only the server's clock is involved,
+  and only for equality, never for ordering. Nothing extra is stored on the
+  server.
 - Every server change is atomic: a single SFTP rename. Uploads go to a temp
   file first. The final rename never overwrites (plain SFTP `rename` fails if the
   target exists), so two uploads can never both land unnoticed.
 - No locks, no ownership. The user decides on every collision.
 - Folders are only namespaces: created on upload, removed when empty.
 
-## Hash files
+## Versions
 
-Each file has a tiny hidden hash file next to it, `.<name>.sha256`, holding the
-SHA-256 and size of the current content. It lets the client compare versions
-without downloading the file. It is only written by the client that just put a
-new version in place, and it moves, copies and gets deleted along with its file.
-A missing hash file means "unknown version".
+A version of a file on the server is identified by its size and modification
+time (mtime), as the server reports them in every listing and stat. SFTP v3
+gives the mtime in whole seconds. Every upload creates a new file (a temp file
+renamed into place), so the server sets a fresh mtime for every new version.
+Renames, moves and claims keep the mtime, so they keep the version.
+
+The transfer list records, for every download and upload, the SHA-256 of the
+content and the server version (size and mtime) that was read or put in place.
+A transfer list entry without a server version (written by SSH-Cloud before
+v0.3) means "unknown version".
+
+One second is coarse: two uploads within the same second with the same size
+would get the same version. To prevent that, an upload that replaces a file
+under the claim (see below) sets the mtime of its temp file to one second after
+the claimed version's mtime when the server's own mtime is not later already.
+Along the chain of versions at one path, uploaded through the app, the mtime
+therefore always increases.
+
+SSH-Cloud before v0.3 kept a hidden hash file `.<name>.sha256` next to every
+file. These are no longer read or written. They stay hidden, a delete or move
+in the app removes the one of that file (so an emptied folder can still be
+removed), and `find <folder> -name '.*.sha256' -delete` on the server removes
+them all.
 
 ## Workflow
 
 **Download** (drag out, or double-click / "Download to..."):
-stream the file, compute SHA-256 from the bytes actually read, and record it in
-the transfer list. (If the hash file disagrees, it is stale; the next upload will
-then prompt, which is the safe side.)
+open the file, stat the open handle, stream the content and compute SHA-256 from
+the bytes actually read, then stat the handle again. The hash and the server
+version are recorded in the transfer list. The open handle keeps reading the
+version it opened, even when an upload replaces the file meanwhile. If the two
+stats differ, or the bytes read do not match the size (the file was changed in
+place by a tool outside the app), the version is recorded as unknown, so the next
+upload prompts. A download never writes to the server.
 
 **Upload** (drag back), per file:
 
-1. If the local hash equals the latest transfer list entry and the server's hash
-   file still has that hash: unchanged, skip.
+1. If the local hash equals the latest transfer list entry and the server still
+   has that entry's version: unchanged, skip.
 2. Upload to a temp file `.<name>.tmp-<random>` next to the target, hashing while
    sending.
-3. **Target does not exist**: rename temp to target, then write the hash file. If
+3. **Target does not exist**: rename temp to target. If
    the rename fails because the target now exists, someone else just created it:
    go to the prompt.
 4. **Target exists**: claim it by renaming it to `.<name>.claim-<random>` with
@@ -54,18 +79,19 @@ then prompt, which is the safe side.)
    loser retries for a moment and then sees the winner's new version. (Plain
    SFTP rename is not used here: OpenSSH implements it as link + unlink, which
    is not exclusive for a contested source.)
-   - The hash file's hash equals the transfer list entry (and its size equals the
-     claimed file's size): nobody else changed it. Delete the hash file, rename
-     temp to target, write the new hash file, delete the claim.
-   - Otherwise (different hash, no hash file, or never transferred by this
-     client): rename the claim back and ask **Replace / Keep both / Skip**
-     (option: apply to all).
+   - The claimed file's size and mtime equal the transfer list entry: nobody
+     else changed it. Give the temp file a later mtime if needed (see
+     Versions), rename temp to target, delete the claim.
+   - Otherwise (a different version, an unknown version, or never transferred
+     by this client): rename the claim back and ask **Replace / Keep both /
+     Skip** (option: apply to all).
    Even when nobody changed the server version, an upload from **another local
    file** with the same name asks first (checked before sending): only the
    local file of the last transfer replaces silently. That is the same path,
    or, for a drag out (recorded with a temp path, as Explorer does not say
    where it put the copy), a file with the same name.
-5. Record the uploaded hash in the transfer list.
+5. Record the uploaded hash and the new server version (a stat of the temp file
+   just before the final rename) in the transfer list.
 
 Two rules keep step 3 and step 4 apart (a folder listing is not an atomic
 snapshot, so a client can miss another client's claim and see the file as
@@ -78,41 +104,20 @@ missing while it is only claimed):
   commit time, someone created it meanwhile: prompt.
 
 Why simultaneous uploads always prompt: only one client wins the claim, and the
-loser then finds a hash file with the winner's hash, which is not in its transfer
-list. A new-file race is caught by the non-overwriting rename in step 3. Both
-races are stress-tested with eight clients at once.
+loser then finds the winner's version, which has a later mtime than the one in
+its transfer list. A new-file race is caught by the non-overwriting rename in
+step 3. Both races are stress-tested with eight clients at once.
 
-Why a crash is safe: the hash file is deleted before the new version goes in and
-written after it. A crash in between leaves no hash file ("unknown"), so the next
-upload prompts. A claim file whose target is missing is renamed back by any client
-that sees it; if the claimer is still busy, its own final rename fails and it
-prompts.
+Why a crash is safe: the version is a property of the file itself, so there is
+nothing to keep in step. A crash leaves at most a temp file or a claim file. A
+claim file whose target is missing is renamed back by any client that sees it;
+if the claimer is still busy, its own final rename fails and it prompts.
 
-**Out-of-sync hash file** (the file was changed outside the app, or a crash left
-an old hash file behind). Rule: never write a hash for content you have not just
-read or written yourself, and only while holding the claim. Detected in three
-places:
-
-- **Listing**: the hash file's size differs from the file's size. Shown as
-  "Changed on server" in the Status column. A listing never writes anything.
-- **Download**: the hash of the bytes just read differs from the hash file, or
-  there is none. The transfer list gets the real hash. Then repair: claim the
-  file; if the hash file is still the same stale one and the claimed file's size
-  equals what was read, write the real hash; otherwise leave it. Release the
-  claim. A hash file that changed meanwhile was written by an uploader, so it is
-  fresh and is left alone.
-- **Upload** (under the claim): the hash file's size differs from the claimed
-  file. Delete the hash file (the content is unknown and not read by us), release
-  the claim and prompt: "report.docx was changed outside SSH-Cloud". Replace
-  writes a correct hash file; Keep both and Skip leave the original as "unknown"
-  until someone downloads it (repair) or replaces it.
-
-An unknown version always prompts on upload, so a stale hash file can cost an
-extra prompt but never cause an unseen overwrite (apart from the same-size outside
-change listed under weaknesses).
+**Changes outside the app** (`scp`, a shell, another SFTP client) give the file
+a new mtime, so they are seen as "changed on the server" like any other change.
 
 **Replace** uses the same claim steps, without the comparison. **Keep both**
-renames temp to `<name> (2).<ext>` (next free number) and writes its hash file.
+renames temp to `<name> (2).<ext>` (next free number).
 
 ## Connections and login
 
@@ -134,7 +139,8 @@ renames temp to `<name> (2).<ext>` (next free number) and writes its hash file.
 ## Transfer list
 
 - Local, per connection profile, append-only (`%APPDATA%\SSH-Cloud\`).
-- Entry: time, direction, remote path, local path, size, SHA-256, result.
+- Entry: time, direction, remote path, local path, size, SHA-256, server mtime,
+  result.
 - Shown in a Transfers window, opened from the "..." menu (newest first,
   including moves and errors).
 - Renames and moves made in the app update the paths in the list.
@@ -169,11 +175,13 @@ renames temp to `<name> (2).<ext>` (next free number) and writes its hash file.
   list with Name, Date modified, Type, Size and Status; Name takes the free
   width. The divider between them can be dragged (the width is remembered;
   double-click resets it). Real shell icons and type names; click a header to
-  sort (folders first). Hash, claim and temp files are hidden.
+  sort (folders first). Claim and temp files are hidden, and so are the
+  `.<name>.sha256` hash files that SSH-Cloud before v0.3 wrote.
 - A plain status line at the bottom, below a thin divider: status on the
   left, item count on the right.
 - Status column: "Up to date" or "Changed on server" for files this client
-  transferred before (only their small hash files are read, in the background).
+  transferred before, from the size and mtime in the listing (no extra
+  requests).
 - Keyboard: Ctrl+X/C/V, Ctrl+A, Ctrl+Shift+N, F2, Del, F5, Backspace,
   Alt+Left/Right/Up, Ctrl+L or Alt+D for the address bar. While typing in the
   address bar or renaming, editing keys act on the text.
@@ -182,16 +190,16 @@ renames temp to `<name> (2).<ext>` (next free number) and writes its hash file.
 - Drag out to Windows Explorer: a hand-written COM `IDataObject` offers
   `FileGroupDescriptorW` (built from listings only) and `FileContents`; each file
   is downloaded through the transfer engine only when the drop target asks for
-  it, so the transfer list records its hash. The first request downloads all
+  it, so the transfer list records its version. The first request downloads all
   files of the drag in the progress window (Cancel aborts the drop); later
   requests are answered from those downloads.
 - Context menu: Open, Download to..., Cut, Copy, Paste, Rename, Delete,
   Copy path, New folder, Upload, Refresh.
 - Server-side copy (Copy then Paste): `copy-data` on a small SFTP session of its
   own (pkg/sftp has no API for it), into a temp file and renamed into place
-  without overwriting. Explorer style names ("report - Copy.docx"). The hash
-  file is carried over only when it is valid for the source and did not change
-  during the copy. Greyed out when the server has no `copy-data`.
+  without overwriting. Explorer style names ("report - Copy.docx"). The copy is
+  a new file with its own version. Greyed out when the server has no
+  `copy-data`.
 - Uploads, downloads, copies and deletes run on a goroutine with a progress
   window (current file, bytes, speed, time left, Cancel). Collision prompts
   open on top of it.
@@ -217,7 +225,7 @@ the icon credits. It has no buttons; Esc, Enter or the close button close it.
 All packages log through `log/slog` to `%APPDATA%\SSH-Cloud\ssh-cloud.log`
 (rotated at 5 MB): connects, login method and keys used (by fingerprint),
 host key decisions, server capabilities, every move, delete, upload, download
-and copy, conflicts and the user's choices, hash repairs, reconnects and
+and copy, conflicts and the user's choices, reconnects and
 errors. Crashes and panics in background work are logged too. Passwords and
 passphrases are never logged.
 
@@ -228,7 +236,7 @@ cmd/ssh-cloud/         the Windows program (manifest for common controls v6)
 cmd/sshcloud-cli/      command-line tool for testing against a real server
 internal/remote/       SSH/SFTP connection, login methods, Pageant, atomic ops,
                        folder create/prune, copy-data
-internal/transfer/     download, upload, copy, hashing, collision check, progress
+internal/transfer/     download, upload, copy, versions, collision check, progress
 internal/transferlog/  local transfer list
 internal/app/          window-independent explorer logic: listing, virtual
                        folders, multi-file operations, status, reconnect
@@ -285,13 +293,17 @@ About window) are only verified by testing on Windows and Wine.
   retried.
 - Servers on filesystems without hard links fall back to a stat-then-rename in
   `sftp-server`, which has a tiny race of its own.
-- Tools outside the app (`scp`, shell) do not update hash files. A change of the
-  same size made that way goes unnoticed; such tools should delete the hash file
-  when they change a file.
+- A version that does not come from an upload through the app can repeat a
+  version this client recorded: a file deleted and created anew, or moved in,
+  with the same size within the same second as the recorded version, or a tool
+  that sets the mtime explicitly (`touch -d`, `rsync -t`, WinSCP keeping the
+  local timestamp) to that same second with the same size. Such a change goes
+  unnoticed.
+- An upload of exactly the content that is already on the server is only
+  skipped when this client transferred that version; otherwise it asks.
 - The transfer list is per client: uploading from another machine always asks.
 - A file that someone creates as new, at the exact moment another client holds
-  a claim on an existing file with that name (or a download is repairing its
-  hash file), can take the name. The claimed version is then kept as
+  a claim on an existing file with that name, can take the name. The claimed version is then kept as
   "name (2).ext" and that client is prompted; nothing is lost, but the version
   moves without its author being told.
 - Pageant checks that the request's file mapping belongs to the current user;

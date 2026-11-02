@@ -187,11 +187,11 @@ func TestMoveFileCreatesTargetAndPrunesSource(t *testing.T) {
 	if err := f.client.Move("a/b/report.docx", "x/y/final.docx"); err != nil {
 		t.Fatal(err)
 	}
-	if !exists(f.root, "x/y/final.docx") || !exists(f.root, "x/y/.final.docx.sha256") {
-		t.Fatal("file and hash file should be at the new path")
+	if !exists(f.root, "x/y/final.docx") || exists(f.root, "x/y/.final.docx.sha256") {
+		t.Fatal("file should be at the new path, without the legacy hash file")
 	}
 	if exists(f.root, "a") {
-		t.Fatal("empty source namespaces should be pruned")
+		t.Fatal("empty source namespaces should be pruned (legacy hash file removed)")
 	}
 }
 
@@ -247,8 +247,8 @@ func TestRename(t *testing.T) {
 	if err := f.client.Rename("docs/a.txt", "b.txt"); err != nil {
 		t.Fatal(err)
 	}
-	if !exists(f.root, "docs/b.txt") || !exists(f.root, "docs/.b.txt.sha256") {
-		t.Fatal("rename should keep the namespace and move the hash file")
+	if !exists(f.root, "docs/b.txt") || exists(f.root, "docs/.a.txt.sha256") || exists(f.root, "docs/.b.txt.sha256") {
+		t.Fatal("rename should keep the namespace and remove the legacy hash file")
 	}
 	if err := f.client.Rename("docs/b.txt", "../c.txt"); !errors.Is(err, remote.ErrInvalidPath) {
 		t.Fatalf("names with slashes must be refused, got %v", err)
@@ -266,7 +266,7 @@ func TestInternalNamesRefused(t *testing.T) {
 	}
 }
 
-func TestDeleteFileRemovesHashAndPrunes(t *testing.T) {
+func TestDeleteFileRemovesLegacyHashAndPrunes(t *testing.T) {
 	f := setup(t)
 	writeFile(t, f.root, "a/b/c.txt", "c")
 	writeFile(t, f.root, "a/b/.c.txt.sha256", "hash")

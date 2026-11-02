@@ -1,7 +1,8 @@
 // Package transferlog is the local transfer list: an append-only record of
 // every download and upload of one connection profile. The latest successful
-// entry per remote path holds the hash this client last read or wrote, which
-// is the basis for collision detection.
+// entry per remote path holds the content hash and the server version (size
+// and mtime) this client last read or wrote, which is the basis for collision
+// detection.
 package transferlog
 
 import (
@@ -47,16 +48,21 @@ type Entry struct {
 	LocalPath  string    `json:"local,omitempty"`
 	Size       int64     `json:"size"`
 	Hash       string    `json:"sha256,omitempty"`
-	Result     Result    `json:"result"`
-	Error      string    `json:"error,omitempty"`
-	From       string    `json:"from,omitempty"` // previous remote path, for moves
+	// Mtime is the server's modification time (Unix seconds) of the version
+	// read or written. Together with Size it identifies that version. Zero
+	// means unknown (an entry from before v0.3, or a file changed during a
+	// download).
+	Mtime  int64  `json:"mtime,omitempty"`
+	Result Result `json:"result"`
+	Error  string `json:"error,omitempty"`
+	From   string `json:"from,omitempty"` // previous remote path, for moves
 	// DragOut marks a download made by dragging out to Windows Explorer. Its
 	// LocalPath is a temp file, as Explorer does not tell where it put the
 	// copy; a file with the same name counts as that copy.
 	DragOut bool `json:"dragOut,omitempty"`
 }
 
-// known reports whether the entry tells which version is on the server.
+// known reports whether the entry records a finished transfer.
 func (e Entry) known() bool {
 	switch e.Result {
 	case Done, Replaced, KeptBoth, Unchanged:
@@ -178,7 +184,7 @@ func (l *Log) Moved(from, to string) error {
 	return l.Add(Entry{Direction: Move, From: from, RemotePath: to, Result: Done})
 }
 
-// Latest returns the latest entry with a known hash for a remote path.
+// Latest returns the latest finished transfer of a remote path.
 func (l *Log) Latest(remotePath string) (Entry, bool) {
 	l.mu.Lock()
 	defer l.mu.Unlock()

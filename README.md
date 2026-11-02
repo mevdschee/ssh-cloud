@@ -13,7 +13,8 @@ database, no vendor. Just a Windows window on a folder on your server.
 - **Never lose work:** if someone changed the file in the meantime, or you
   upload a different file with the same name, SSH-Cloud asks before it
   overwrites. No locks, no conflicts hidden from you.
-- **Nothing to install on the server:** plain OpenSSH (SFTP) is all it needs.
+- **Nothing to install on the server:** plain OpenSSH (SFTP) is all it needs,
+  and it keeps nothing there but your files.
 - **Feels like home:** a Windows 11 style window with tabs for several
   connections, light or dark like the rest of Windows.
 
@@ -24,6 +25,14 @@ You need to be on Windows 11. Install the MSI from the
 the Start menu, enter your server, username and remote folder, and you have a
 cloud. Log in with your SSH agent, Pageant, a key file or a password. Use "Check
 for updates" in the "..." menu to get new versions.
+
+Versions before v0.3 kept a hidden `.<name>.sha256` file next to every file.
+They are no longer used. SSH-Cloud still hides them and removes them when it
+deletes or moves a file. To remove them all at once, run this on the server:
+
+```
+find /path/to/folder -name '.*.sha256' -delete
+```
 
 ## Build
 

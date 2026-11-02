@@ -140,8 +140,6 @@ func showConflict(parent ui.Parent, c *transfer.ConflictError, localPath string)
 	switch c.Reason {
 	case transfer.NeverTransferred:
 		detail = "You have not transferred this file before, and a file with this name already exists on the server."
-	case transfer.ChangedOutside:
-		detail = "The file was changed outside SSH-Cloud, so its version is unknown."
 	case transfer.UnknownVersion:
 		detail = "The version on the server is unknown."
 	case transfer.CreatedMeanwhile:
