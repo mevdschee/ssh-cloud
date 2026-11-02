@@ -107,6 +107,7 @@ type menuItem struct {
 	text    string
 	enabled bool
 	bold    bool // default action
+	checked bool // shows a check mark
 }
 
 // popupMenu shows a popup menu at the cursor and returns the chosen id, or 0.
@@ -139,6 +140,9 @@ func popupMenuAt(owner win.HWND, items []menuItem, pos win.POINT) uint16 {
 			}
 			if it.bold {
 				mii.FState |= co.MFS_DEFAULT
+			}
+			if it.checked {
+				mii.FState |= co.MFS_CHECKED
 			}
 		}
 		_ = hMenu.InsertMenuItemByPos(i, &mii)

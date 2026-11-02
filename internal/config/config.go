@@ -38,6 +38,7 @@ type Config struct {
 	LastProfile    string    `json:"lastProfile,omitempty"`
 	DownloadFolder string    `json:"downloadFolder,omitempty"`
 	TreeWidth      int       `json:"treeWidth,omitempty"` // folder tree width at 96 DPI; 0 is the default
+	ShowHidden     bool      `json:"showHidden,omitempty"` // show files and folders whose name starts with a dot
 }
 
 // Dir returns the SSH-Cloud settings directory.

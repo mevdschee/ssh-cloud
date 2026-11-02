@@ -189,6 +189,11 @@ func (me *Explorer) events() {
 	})
 
 	me.wnd.On().WmSize(func(_ ui.WmSize) { me.layout() })
+	me.wnd.On().WmGetMinMaxInfo(func(p ui.WmGetMinMaxInfo) {
+		if w := me.minWindowWidth(); w > 0 {
+			p.Info().PtMinTrackSize.X = int32(w)
+		}
+	})
 	me.toolbarEvents()
 
 	me.wnd.On().WmDropFiles(func(p ui.WmDropFiles) {
@@ -454,6 +459,7 @@ func (me *Explorer) navigate(dir string, remember bool) {
 			me.forward = nil
 		}
 		me.dir = dir
+		entries = me.visible(entries)
 		me.show(entries)
 		me.syncTree(dir, entries)
 		me.setStatus("Ready")
@@ -461,6 +467,47 @@ func (me *Explorer) navigate(dir string, remember bool) {
 }
 
 func (me *Explorer) refresh() { me.navigate(me.dir, false) }
+
+// visible drops hidden entries (names starting with a dot, as on the server)
+// unless "Show hidden files" is on. SSH-Cloud's own files are never listed.
+func (me *Explorer) visible(entries []remote.Entry) []remote.Entry {
+	if me.cfg.ShowHidden {
+		return entries
+	}
+	out := entries[:0:0]
+	for _, e := range entries {
+		if !strings.HasPrefix(e.Name, ".") {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// toggleHidden switches "Show hidden files", saves the setting and reloads
+// the tree and the list. When hidden files get hidden while a hidden folder
+// is open, its nearest visible parent is shown instead.
+func (me *Explorer) toggleHidden() {
+	me.cfg.ShowHidden = !me.cfg.ShowHidden
+	if err := me.cfg.Save(me.cfgDir); err != nil {
+		slog.Error("save settings", "err", err)
+	}
+	if !me.isConnected() {
+		return
+	}
+	dir := me.dir
+	if !me.cfg.ShowHidden {
+		for p := dir; p != ""; p = remote.Dir(p) {
+			if strings.HasPrefix(remote.Base(p), ".") {
+				dir = remote.Dir(p)
+			}
+		}
+	}
+	me.mu.Lock()
+	name := me.profile.DisplayName()
+	me.mu.Unlock()
+	me.resetTree(name)
+	me.navigate(dir, dir != me.dir)
+}
 
 func (me *Explorer) goUp() {
 	if me.dir != "" {

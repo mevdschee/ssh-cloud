@@ -76,7 +76,7 @@ func (me *Explorer) loadTreeChildren(item ui.TreeViewItem) {
 				}
 				return
 			}
-			me.setTreeChildren(item, entries)
+			me.setTreeChildren(item, me.visible(entries))
 		})
 	}()
 }

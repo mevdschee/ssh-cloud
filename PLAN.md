@@ -166,17 +166,22 @@ renames temp to `<name> (2).<ext>` (next free number).
   borderless edit in a slightly larger font, centred in a white box with a
   rounded grey border and an accent underline while it has focus.
 - One command bar: New folder | Cut, Copy, Paste, Rename, Delete | Upload,
-  Download | "..." (overflow menu: Transfers, Check for updates, then
-  About ...). Icon-only buttons are 40 px wide with 8 px between them, like
-  Explorer (the spacing is skipped under Wine, which lacks TB_SETMETRICS).
-  Long operations are cancelled in their progress window; there is no Stop
-  button.
+  Download | "..." (overflow menu: Transfers, Show hidden files, then Check
+  for updates, then About ...). Icon-only buttons are 40 px wide with 8 px
+  between them, like Explorer (the spacing is skipped under Wine, which lacks
+  TB_SETMETRICS). Long operations are cancelled in their progress window;
+  there is no Stop button.
+- The window cannot be made narrower than the toolbars: the command bar, or
+  the navigation bar with room for the address bar.
 - Folder tree (loaded as you expand it, kept in step with the list) and a file
   list with Name, Date modified, Type, Size and Status; Name takes the free
   width. The divider between them can be dragged (the width is remembered;
   double-click resets it). Real shell icons and type names; click a header to
-  sort (folders first). Claim and temp files are hidden, and so are the
-  `.<name>.sha256` hash files that SSH-Cloud before v0.3 wrote.
+  sort (folders first). Files and folders whose name starts with a dot are
+  hidden, in the list and the tree, unless "Show hidden files" (a check mark
+  in the overflow menu, remembered in the settings) is on. Claim and temp
+  files are never shown, and neither are the `.<name>.sha256` hash files that
+  SSH-Cloud before v0.3 wrote.
 - A plain status line at the bottom, below a thin divider: status on the
   left, item count on the right.
 - Status column: "Up to date" or "Changed on server" for files this client

@@ -32,6 +32,7 @@ const (
 // Overflow menu ids.
 const (
 	cmdShowTransfers uint16 = 2201 + iota
+	cmdShowHidden
 	cmdCheckUpdates
 	cmdAbout
 )
@@ -222,6 +223,25 @@ func (me *Explorer) layout() {
 	procInvalidateRect.Call(uintptr(me.wnd.Hwnd()), 0, 1)
 }
 
+// minWindowWidth is the narrowest the window may get: wide enough for the
+// toolbars (the command bar, and the navigation bar with a usable address
+// bar) and their margins, plus the window frame.
+func (me *Explorer) minWindowWidth() int {
+	if !me.styled {
+		return 0
+	}
+	m := ui.DpiX(8)
+	cmd, nav := toolbarSize(me.cmdBar), toolbarSize(me.navBar)
+	client := max(m+int(cmd.Cx)+m, m+int(nav.Cx)+ui.DpiX(12)+ui.DpiX(120)+ui.DpiX(12))
+	hwnd := me.wnd.Hwnd()
+	wr, err1 := hwnd.GetWindowRect()
+	cr, err2 := hwnd.GetClientRect()
+	if err1 != nil || err2 != nil {
+		return client
+	}
+	return client + int(wr.Right-wr.Left) - int(cr.Right-cr.Left)
+}
+
 // fitColumns sizes the columns like Explorer: Date modified, Type, Size and
 // Status keep their width and Name takes the rest, so there is no
 // horizontal scrollbar until the list gets really narrow.
@@ -278,6 +298,8 @@ func (me *Explorer) moreMenu() {
 	rc := buttonScreenRect(me.cmdBar, tbMore)
 	items := []menuItem{
 		{id: cmdShowTransfers, text: "&Transfers", enabled: me.isConnected() && !me.busy},
+		{id: cmdShowHidden, text: "Show &hidden files", enabled: !me.busy, checked: me.cfg.ShowHidden},
+		{},
 		{id: cmdCheckUpdates, text: "Check for &updates", enabled: !me.busy},
 		{},
 		{id: cmdAbout, text: "&About ...", enabled: !me.busy},
@@ -285,6 +307,8 @@ func (me *Explorer) moreMenu() {
 	switch popupMenuAt(me.wnd.Hwnd(), items, win.POINT{X: rc.Left, Y: rc.Bottom}) {
 	case cmdShowTransfers:
 		me.showTransfers()
+	case cmdShowHidden:
+		me.toggleHidden()
 	case cmdCheckUpdates:
 		me.checkForUpdates()
 	case cmdAbout:
