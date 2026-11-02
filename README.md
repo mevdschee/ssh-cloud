@@ -71,6 +71,8 @@ that still need to be tested properly:
   changed host keys, wrong or expired credentials and slow connections.
 - **Display scaling:** different DPI settings (100%, 125%, 150%, 200%) and
   moving the window between monitors with different scaling.
+- **Translations:** currently available in English only, needs other languages
+  as well, such as Dutch, Spanish and French.
 - **SSH servers:** only tested against OpenSSH on Debian 13. Other OpenSSH
   versions, other distributions, macOS, Windows OpenSSH, Dropbear and SFTP-only
   hosting (chrooted accounts, NAS devices) still need testing.
