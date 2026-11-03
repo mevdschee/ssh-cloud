@@ -21,7 +21,8 @@ database, no vendor. Just a Windows window on a folder on your server.
 ## Get started
 
 You need to be on Windows 11. Install the MSI from the
-[releases](https://github.com/mevdschee/ssh-cloud/releases). Run SSH-Cloud from
+[releases](https://github.com/mevdschee/ssh-cloud/releases). It installs for
+your user only and does not need admin rights. Run SSH-Cloud from
 the Start menu, enter your server, username and remote folder, and you have a
 cloud. Log in with your SSH agent, Pageant, a key file or a password. Use "Check
 for updates" in the "..." menu to get new versions.

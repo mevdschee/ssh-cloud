@@ -2,12 +2,13 @@
 <!--
   MSI definition, built with wixl (msitools) by release.sh:
   wixl -a x64 -D Version=x.y.z -D FileVersion=x.y.z.b -D ExePath=... -D IconPath=... -o out.msi ssh-cloud.wxs
+  It installs per user, without admin rights, into %LOCALAPPDATA%\Programs\SSH-Cloud.
   The UpgradeCode must never change, so new versions replace old ones.
 -->
 <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
   <Product Id="*" Name="SSH-Cloud" Language="1033" Version="$(var.Version)"
            Manufacturer="Maurits van der Schee" UpgradeCode="A0F6BE47-E90C-4943-A201-5A906FEA1DCF">
-    <Package InstallerVersion="500" Compressed="yes" InstallScope="perMachine"
+    <Package InstallerVersion="500" Compressed="yes" InstallScope="perUser"
              Description="SSH-Cloud $(var.Version)" Comments="Cloud storage over SSH for Windows"/>
     <Media Id="1" Cabinet="sshcloud.cab" EmbedCab="yes"/>
     <MajorUpgrade AllowSameVersionUpgrades="yes"
@@ -18,15 +19,21 @@
     <Property Id="ARPURLINFOABOUT" Value="https://github.com/mevdschee/ssh-cloud"/>
 
     <Directory Id="TARGETDIR" Name="SourceDir">
-      <Directory Id="ProgramFiles64Folder">
-        <Directory Id="INSTALLDIR" Name="SSH-Cloud">
-          <Component Id="MainExecutable" Guid="*" Win64="yes">
-            <!-- The version must be set: an unversioned file never replaces
-                 the versioned exe of the old install during an upgrade, and
-                 removing the old version then deletes it. -->
-            <File Id="ssh_cloud.exe" Name="ssh-cloud.exe" Source="$(var.ExePath)" KeyPath="yes"
-                  DefaultVersion="$(var.FileVersion)"/>
-          </Component>
+      <Directory Id="LocalAppDataFolder">
+        <Directory Id="ProgramsFolder" Name="Programs">
+          <Directory Id="INSTALLDIR" Name="SSH-Cloud">
+            <!-- Per-user components need a registry key path, not the file. -->
+            <Component Id="MainExecutable" Guid="*" Win64="yes">
+              <!-- The version must be set: an unversioned file never replaces
+                   the versioned exe of the old install during an upgrade, and
+                   removing the old version then deletes it. -->
+              <File Id="ssh_cloud.exe" Name="ssh-cloud.exe" Source="$(var.ExePath)"
+                    DefaultVersion="$(var.FileVersion)"/>
+              <RemoveFolder Id="RemoveInstallDir" On="uninstall"/>
+              <RegistryValue Root="HKCU" Key="Software\SSH-Cloud" Name="exe"
+                             Type="integer" Value="1" KeyPath="yes"/>
+            </Component>
+          </Directory>
         </Directory>
       </Directory>
       <Directory Id="ProgramMenuFolder">
