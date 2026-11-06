@@ -681,16 +681,74 @@ func (me *Explorer) selected() []remote.Entry {
 	return sel
 }
 
-// open enters a folder, or downloads a file.
+// open enters a folder, or opens files with their default application. A
+// selection that mixes files and folders is downloaded instead.
 func (me *Explorer) open() {
 	sel := me.selected()
 	if len(sel) == 1 && sel[0].IsDir {
 		me.navigate(sel[0].Path, true)
 		return
 	}
+	if allFiles(sel) {
+		me.openFiles(sel)
+		return
+	}
 	if len(sel) > 0 {
 		me.download()
 	}
+}
+
+func allFiles(entries []remote.Entry) bool {
+	for _, e := range entries {
+		if e.IsDir {
+			return false
+		}
+	}
+	return len(entries) > 0
+}
+
+// openFiles downloads files to a new folder under the temp folder, marks
+// them read-only (they are copies; edits would not go back to the server)
+// and opens each with its default application.
+func (me *Explorer) openFiles(entries []remote.Entry) {
+	if me.busy {
+		return
+	}
+	root := filepath.Join(openTempRoot(), fmt.Sprintf("%d", time.Now().UnixNano()))
+	var jobs []app.FileJob
+	for _, e := range entries {
+		jobs = append(jobs, app.FileJob{Remote: e.Path, Local: filepath.Join(root, path.Base(e.Path)), Size: e.Size})
+	}
+	me.runWithProgress("Opening", func(ctx context.Context, a *app.App, progress app.Progress) error {
+		if err := a.DownloadFiles(ctx, jobs, progress); err != nil {
+			return err
+		}
+		for _, j := range jobs {
+			if err := os.Chmod(j.Local, 0o444); err != nil {
+				return err
+			}
+		}
+		return nil
+	}, func(err error) {
+		if err != nil {
+			me.setStatus("Open failed")
+			if !errors.Is(err, context.Canceled) {
+				ui.MsgError(me.wnd, "Open", "Could not download the file", err.Error())
+			}
+			return
+		}
+		for _, j := range jobs {
+			slog.Info("open file", "remote", j.Remote, "local", j.Local)
+			if err := shellOpen(me.wnd.Hwnd(), j.Local); err != nil {
+				ui.MsgError(me.wnd, "Open", "Could not open "+filepath.Base(j.Local), err.Error())
+			}
+		}
+		if len(jobs) == 1 {
+			me.setStatus("Opened a read-only copy of " + filepath.Base(jobs[0].Local))
+		} else {
+			me.setStatus(fmt.Sprintf("Opened %d read-only copies", len(jobs)))
+		}
+	})
 }
 
 func (me *Explorer) contextMenu() {
@@ -699,13 +757,14 @@ func (me *Explorer) contextMenu() {
 	}
 	sel := me.selected()
 	n := len(sel)
-	// A folder opens on double-click, a file downloads; the default (bold)
-	// item matches that, and "Download to..." appears only once.
+	// Double-click enters a folder or opens files; a mix of files and
+	// folders downloads. The default (bold) item matches that.
+	canOpen := (n == 1 && sel[0].IsDir) || allFiles(sel)
 	var items []menuItem
-	if n == 1 && sel[0].IsDir {
+	if canOpen {
 		items = append(items, menuItem{id: cmdOpen, text: "&Open", enabled: true, bold: true})
 	}
-	items = append(items, menuItem{id: cmdDownload, text: "Download &to...", enabled: n > 0, bold: n > 0 && !(n == 1 && sel[0].IsDir)})
+	items = append(items, menuItem{id: cmdDownload, text: "Download &to...", enabled: n > 0, bold: n > 0 && !canOpen})
 	items = append(items, []menuItem{
 		{},
 		{id: cmdCut, text: "Cu&t\tCtrl+X", enabled: n > 0},

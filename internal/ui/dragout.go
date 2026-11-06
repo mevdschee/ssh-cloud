@@ -389,18 +389,30 @@ func dragTempRoot() string {
 	return filepath.Join(os.TempDir(), "SSH-Cloud", fmt.Sprintf("drag-%d", os.Getpid()))
 }
 
+// openTempRoot holds the read-only copies of opened files. They outlive the
+// process, since the applications that show them may still be running.
+func openTempRoot() string {
+	return filepath.Join(os.TempDir(), "SSH-Cloud", "open")
+}
+
 // cleanDragTemp removes this process's drag files, and drag folders of
-// earlier runs that are older than a day.
+// earlier runs and opened files that are older than a day.
 func cleanDragTemp() {
 	_ = os.RemoveAll(dragTempRoot())
 	base := filepath.Join(os.TempDir(), "SSH-Cloud")
-	entries, _ := os.ReadDir(base)
+	removeOld(base, func(name string) bool { return strings.HasPrefix(name, "drag-") })
+	removeOld(openTempRoot(), func(string) bool { return true })
+}
+
+// removeOld removes the matching folders in dir that are older than a day.
+func removeOld(dir string, match func(name string) bool) {
+	entries, _ := os.ReadDir(dir)
 	for _, e := range entries {
-		if !e.IsDir() || !strings.HasPrefix(e.Name(), "drag-") {
+		if !e.IsDir() || !match(e.Name()) {
 			continue
 		}
 		if fi, err := e.Info(); err == nil && time.Since(fi.ModTime()) > 24*time.Hour {
-			_ = os.RemoveAll(filepath.Join(base, e.Name()))
+			_ = os.RemoveAll(filepath.Join(dir, e.Name()))
 		}
 	}
 }

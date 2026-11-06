@@ -34,12 +34,23 @@ var (
 
 // openURL opens a web page in the default browser.
 func openURL(owner win.HWND, url string) {
-	verb, _ := syscall.UTF16PtrFromString("open")
-	u, _ := syscall.UTF16PtrFromString(url)
-	r, _, _ := procShellExecuteW.Call(uintptr(owner), uintptr(unsafe.Pointer(verb)), uintptr(unsafe.Pointer(u)), 0, 0, 1) // SW_SHOWNORMAL
-	if r <= 32 {
-		slog.Error("open url", "url", url, "code", r)
+	if err := shellOpen(owner, url); err != nil {
+		slog.Error("open url", "url", url, "err", err)
 	}
+}
+
+// shellOpen opens a file or URL with its default application.
+func shellOpen(owner win.HWND, target string) error {
+	verb, _ := syscall.UTF16PtrFromString("open")
+	t, err := syscall.UTF16PtrFromString(target)
+	if err != nil {
+		return err
+	}
+	r, _, _ := procShellExecuteW.Call(uintptr(owner), uintptr(unsafe.Pointer(verb)), uintptr(unsafe.Pointer(t)), 0, 0, 1) // SW_SHOWNORMAL
+	if r <= 32 {
+		return fmt.Errorf("ShellExecute failed with code %d", r)
+	}
+	return nil
 }
 
 // appIconList renders the app icon at an exact size into a one-image list,

@@ -9,6 +9,8 @@ database, no vendor. Just a Windows window on a folder on your server.
 
 - **Browse** the server like Windows Explorer: rename, move, copy and delete
   happen directly on the server.
+- **Look at a file:** double-click it to open a read-only copy with its
+  default application.
 - **Work on a file:** drag it out, edit it, drag it back.
 - **Never lose work:** if someone changed the file in the meantime, or you
   upload a different file with the same name, SSH-Cloud asks before it
